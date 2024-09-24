@@ -16,9 +16,11 @@ import torch
 import tqdm
 from gym import spaces
 from habitat import Config, logger
+from habitat.core.environments import get_env_class
 from habitat.utils import profiling_wrapper
 from habitat.utils.render_wrapper import overlay_frame
 from habitat.utils.visualizations.utils import observations_to_image
+
 from habitat_baselines.common.baseline_registry import baseline_registry
 from habitat_baselines.common.obs_transformers import (
     apply_obs_transforms_batch,
@@ -51,12 +53,23 @@ from torch.optim.lr_scheduler import LambdaLR
 
 from pirlnav.algos.agent import DDPILAgent
 from pirlnav.common.rollout_storage import RolloutStorage
+from pirlnav.utils.env_utils import construct_envs
 
 
 @baseline_registry.register_trainer(name="pirlnav-il")
 class ILEnvDDPTrainer(PPOTrainer):
     def __init__(self, config=None):
         super().__init__(config)
+
+    def _init_envs(self, config=None):
+        if config is None:
+            config = self.config
+
+        self.envs = construct_envs(
+            config,
+            get_env_class(config.ENV_NAME),
+            workers_ignore_signals=is_slurm_batch_job(),
+        )
 
     def _setup_actor_critic_agent(self, il_cfg: Config) -> None:
         r"""Sets up actor critic and agent for IL.
@@ -271,9 +284,7 @@ class ILEnvDDPTrainer(PPOTrainer):
             range(env_slice.start, env_slice.stop), actions.unbind(0)
         ):
             if act.shape[0] > 1:
-                step_action = action_array_to_dict(
-                    self.policy_action_space, act
-                )
+                step_action = action_array_to_dict(self.policy_action_space, act)
             else:
                 step_action = act.item()
             self.envs.async_step_at(index_env, step_action)
@@ -335,16 +346,12 @@ class ILEnvDDPTrainer(PPOTrainer):
             self.pth_time = requeue_stats["pth_time"]
             self.num_steps_done = requeue_stats["num_steps_done"]
             self.num_updates_done = requeue_stats["num_updates_done"]
-            self._last_checkpoint_percent = requeue_stats[
-                "_last_checkpoint_percent"
-            ]
+            self._last_checkpoint_percent = requeue_stats["_last_checkpoint_percent"]
             count_checkpoints = requeue_stats["count_checkpoints"]
             prev_time = requeue_stats["prev_time"]
 
             self.running_episode_stats = requeue_stats["running_episode_stats"]
-            self.window_episode_stats.update(
-                requeue_stats["window_episode_stats"]
-            )
+            self.window_episode_stats.update(requeue_stats["window_episode_stats"])
 
         ppo_cfg = self.config.RL.PPO
         il_cfg = self.config.IL.BehaviorCloning
@@ -420,9 +427,7 @@ class ILEnvDDPTrainer(PPOTrainer):
 
                         if not is_last_step:
                             if (buffer_index + 1) == self._nbuffers:
-                                profiling_wrapper.range_push(
-                                    "_collect_rollout_step"
-                                )
+                                profiling_wrapper.range_push("_collect_rollout_step")
 
                             self._compute_actions_and_step_envs(buffer_index)
 
@@ -469,15 +474,9 @@ class ILEnvDDPTrainer(PPOTrainer):
             self.envs.close()
 
     @rank0_only
-    def _training_log(
-        self, writer, losses: Dict[str, float], prev_time: int = 0
-    ):
+    def _training_log(self, writer, losses: Dict[str, float], prev_time: int = 0):
         deltas = {
-            k: (
-                (v[-1] - v[0]).sum().item()
-                if len(v) > 1
-                else v[0].sum().item()
-            )
+            k: ((v[-1] - v[0]).sum().item() if len(v) > 1 else v[0].sum().item())
             for k, v in self.window_episode_stats.items()
         }
         deltas["count"] = max(deltas["count"], 1.0)
@@ -531,9 +530,7 @@ class ILEnvDDPTrainer(PPOTrainer):
                         for k, v in deltas.items()
                         if k != "count"
                     ),
-                    "  ".join(
-                        "{}: {:.3f}".format(k, v) for k, v in losses.items()
-                    ),
+                    "  ".join("{}: {:.3f}".format(k, v) for k, v in losses.items()),
                 )
             )
 
@@ -558,9 +555,7 @@ class ILEnvDDPTrainer(PPOTrainer):
 
         # Map location CPU is almost always better than mapping to a CUDA device.
         if self.config.EVAL.SHOULD_LOAD_CKPT:
-            ckpt_dict = self.load_checkpoint(
-                checkpoint_path, map_location="cpu"
-            )
+            ckpt_dict = self.load_checkpoint(checkpoint_path, map_location="cpu")
         else:
             ckpt_dict = {}
 
@@ -574,10 +569,7 @@ class ILEnvDDPTrainer(PPOTrainer):
         config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
         config.freeze()
 
-        if (
-            len(self.config.VIDEO_OPTION) > 0
-            and self.config.VIDEO_RENDER_TOP_DOWN
-        ):
+        if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
             config.defrost()
             config.TASK_CONFIG.TASK.MEASUREMENTS.append("TOP_DOWN_MAP")
             config.TASK_CONFIG.TASK.MEASUREMENTS.append("COLLISIONS")
@@ -611,10 +603,12 @@ class ILEnvDDPTrainer(PPOTrainer):
         self._setup_actor_critic_agent(il_cfg)
 
         if self.agent.actor_critic.should_load_agent_state:
-            self.agent.load_state_dict({
-                k.replace("model.", "actor_critic."): v
-                for k, v in ckpt_dict["state_dict"].items()
-            })
+            self.agent.load_state_dict(
+                {
+                    k.replace("model.", "actor_critic."): v
+                    for k, v in ckpt_dict["state_dict"].items()
+                }
+            )
         self.actor_critic = self.agent.actor_critic
 
         observations = self.envs.reset()
@@ -623,9 +617,7 @@ class ILEnvDDPTrainer(PPOTrainer):
         )
         batch = apply_obs_transforms_batch(batch, self.obs_transforms)  # type: ignore
 
-        current_episode_reward = torch.zeros(
-            self.envs.num_envs, 1, device="cpu"
-        )
+        current_episode_reward = torch.zeros(self.envs.num_envs, 1, device="cpu")
 
         test_recurrent_hidden_states = torch.zeros(
             self.config.NUM_ENVIRONMENTS,
@@ -645,9 +637,9 @@ class ILEnvDDPTrainer(PPOTrainer):
             device=self.device,
             dtype=torch.bool,
         )
-        stats_episodes: Dict[
-            Any, Any
-        ] = {}  # dict of dicts that stores stats per episode
+        stats_episodes: Dict[Any, Any] = (
+            {}
+        )  # dict of dicts that stores stats per episode
 
         rgb_frames = [
             [] for _ in range(self.config.NUM_ENVIRONMENTS)
@@ -671,10 +663,7 @@ class ILEnvDDPTrainer(PPOTrainer):
         pbar = tqdm.tqdm(total=number_of_eval_episodes)
         logger.info("Sampling actions deterministically...")
         self.actor_critic.eval()
-        while (
-            len(stats_episodes) < number_of_eval_episodes
-            and self.envs.num_envs > 0
-        ):
+        while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
             current_episodes = self.envs.current_episodes()
 
             with torch.no_grad():
@@ -705,9 +694,7 @@ class ILEnvDDPTrainer(PPOTrainer):
 
             outputs = self.envs.step(step_data)
 
-            observations, rewards_l, dones, infos = [
-                list(x) for x in zip(*outputs)
-            ]
+            observations, rewards_l, dones, infos = [list(x) for x in zip(*outputs)]
             batch = batch_obs(  # type: ignore
                 observations,
                 device=self.device,
@@ -738,12 +725,8 @@ class ILEnvDDPTrainer(PPOTrainer):
                 # episode ended
                 if not not_done_masks[i].item():
                     pbar.update()
-                    episode_stats = {
-                        "reward": current_episode_reward[i].item()
-                    }
-                    episode_stats.update(
-                        self._extract_scalars_from_info(infos[i])
-                    )
+                    episode_stats = {"reward": current_episode_reward[i].item()}
+                    episode_stats.update(self._extract_scalars_from_info(infos[i]))
                     current_episode_reward[i] = 0
                     # use scene_id + episode_id as unique id for storing stats
                     stats_episodes[
@@ -803,8 +786,7 @@ class ILEnvDDPTrainer(PPOTrainer):
         aggregated_stats = {}
         for stat_key in next(iter(stats_episodes.values())).keys():
             aggregated_stats[stat_key] = (
-                sum(v[stat_key] for v in stats_episodes.values())
-                / num_episodes
+                sum(v[stat_key] for v in stats_episodes.values()) / num_episodes
             )
 
         for k, v in aggregated_stats.items():
