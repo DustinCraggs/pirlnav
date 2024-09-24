@@ -55,12 +55,12 @@ class VisualEncoder(nn.Module):
                 nn.ReLU(True),
             )
 
-            output_shape = (
+            self.output_shape = (
                 num_compression_channels,
                 final_spatial,
                 final_spatial,
             )
-            self.output_size = np.prod(output_shape)
+            self.output_size = np.prod(self.output_shape)
         else:
             raise ValueError("unknown backbone {}".format(backbone))
 

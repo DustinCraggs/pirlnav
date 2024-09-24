@@ -49,7 +49,7 @@ from habitat_baselines.utils.common import (
 from torch import nn as nn
 from torch.optim.lr_scheduler import LambdaLR
 
-from pirlnav.algos.agent import DDPILAgent
+from pirlnav.algos.agent import DDPILAgent, ILAgent
 from pirlnav.common.rollout_storage import RolloutStorage
 
 
@@ -82,7 +82,13 @@ class ILEnvDDPTrainer(PPOTrainer):
         )
         self.actor_critic.to(self.device)
 
-        self.agent = DDPILAgent(
+        if not self.config.RL.DDPPO.train_encoder:
+            self._static_encoder = True
+            for param in self.actor_critic.net.visual_encoder.parameters():
+                param.requires_grad_(False)
+
+        agent_cls = ILAgent if not self._is_distributed else DDPILAgent
+        self.agent = agent_cls(
             actor_critic=self.actor_critic,
             num_envs=self.envs.num_envs,
             num_mini_batch=il_cfg.num_mini_batch,
@@ -220,8 +226,10 @@ class ILEnvDDPTrainer(PPOTrainer):
         batch = apply_obs_transforms_batch(batch, self.obs_transforms)  # type: ignore
 
         if self._static_encoder:
+            # print(f"BATCH: {batch}")
+            # print(f"AFTER: {self.actor_critic.net(batch)}")
             with torch.no_grad():
-                batch["visual_features"] = self._encoder(batch)
+                batch["visual_features"] = self._encoder(batch["rgb"])
 
         self.rollouts.buffers["observations"][0] = batch  # type: ignore
 
@@ -389,11 +397,8 @@ class ILEnvDDPTrainer(PPOTrainer):
 
                 if EXIT.is_set():
                     profiling_wrapper.range_pop()  # train update
-
                     self.envs.close()
-
                     requeue_job()
-
                     return
 
                 self.agent.eval()
