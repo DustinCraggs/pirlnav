@@ -15,13 +15,14 @@ from habitat.config import Config
 from habitat_baselines.common.baseline_registry import baseline_registry
 
 from pirlnav.config import get_config
+from pirlnav.gen_representation_dataset import RepresentationGenerator
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--run-type",
-        choices=["train", "eval"],
+        choices=["train", "eval", "gen"],
         required=True,
         help="run type of the experiment (train or eval)",
     )
@@ -42,19 +43,23 @@ def main():
     run_exp(**vars(args))
 
 
-def execute_exp(config: Config, run_type: str) -> None:
+def execute_exp(config: Config, run_type: str, seed=None) -> None:
     r"""This function runs the specified config with the specified runtype
     Args:
     config: Habitat.config
     runtype: str {train or eval}
     """
-    # set a random seed (from detectron2)
-    seed = (
-        os.getpid()
-        + int(datetime.now().strftime("%S%f"))
-        + int.from_bytes(os.urandom(2), "big")
-    )
-    logger.info("Using a generated random seed {}".format(seed))
+    if seed is None:
+        # set a random seed (from detectron2)
+        seed = (
+            os.getpid()
+            + int(datetime.now().strftime("%S%f"))
+            + int.from_bytes(os.urandom(2), "big")
+        )
+        logger.info("Using a generated random seed {}".format(seed))
+    else:
+        logger.info("Using seed {}".format(seed))
+
     config.defrost()
     config.RUN_TYPE = run_type
     config.TASK_CONFIG.SEED = seed
@@ -73,9 +78,12 @@ def execute_exp(config: Config, run_type: str) -> None:
         trainer.train()
     elif run_type == "eval":
         trainer.eval()
+    elif run_type == "gen":
+        generator = RepresentationGenerator(config)
+        generator.generate()
 
 
-def run_exp(exp_config: str, run_type: str, opts=None) -> None:
+def run_exp(exp_config: str, run_type: str, seed=None, opts=None) -> None:
     r"""Runs experiment given mode and config
 
     Args:
@@ -87,7 +95,7 @@ def run_exp(exp_config: str, run_type: str, opts=None) -> None:
         None.
     """
     config = get_config(exp_config, opts)
-    execute_exp(config, run_type)
+    execute_exp(config, run_type, seed)
 
 
 if __name__ == "__main__":

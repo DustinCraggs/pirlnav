@@ -1,5 +1,10 @@
 ENVIRONMENT:
   MAX_EPISODE_STEPS: 500
+  ITERATOR_OPTIONS:
+    CYCLE: True
+    SHUFFLE: False
+    MAX_SCENE_REPEAT_EPISODES: -1
+    MAX_SCENE_REPEAT_STEPS: -1
 
 SIMULATOR:
   FORWARD_STEP_SIZE: 0.25
@@ -63,4 +68,13 @@ DATASET:
   DATA_PATH: "data/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_v1/{split}/{split}.json.gz"
   SCENES_DIR: "data/scene_datasets/"
   MAX_EPISODE_STEPS: 500
+  EPISODE_STRIDE: 200
+  SORT_BY_SCENE_AND_GOAL: True
 
+
+REPRESENTATION_GENERATOR:
+  # data_generator_name: clip
+  data_generator_name: non_visual
+  output_zarr_path: pvr_data/one_percent/non_visual_data
+  batch_chunk_size: 1000
+  save_non_visual_obs: False

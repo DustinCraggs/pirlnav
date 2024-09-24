@@ -8,7 +8,7 @@ TENSORBOARD_DIR: "tb"
 VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: -1
 EVAL_CKPT_PATH_DIR: "data/new_checkpoints"
-NUM_ENVIRONMENTS: 4
+NUM_ENVIRONMENTS: 32
 CHECKPOINT_FOLDER: "data/new_checkpoints"
 TRAINER_NAME: "pirlnav-il"
 SENSORS: ["RGB_SENSOR"]
@@ -33,3 +33,10 @@ RL:
 POLICY:
   CRITIC:
     no_critic: True
+
+WB:
+  ENTITY: gyo
+  PROJECT_NAME: habitat-bc
+  GROUP: test_pirlnav
+  RUN_NAME: test_pirlnav_1
+WRITER_TYPE: "wb"
