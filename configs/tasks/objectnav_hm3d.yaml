@@ -68,13 +68,21 @@ DATASET:
   DATA_PATH: "data/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_v1/{split}/{split}.json.gz"
   SCENES_DIR: "data/scene_datasets/"
   MAX_EPISODE_STEPS: 500
-  EPISODE_STRIDE: 200
-  SORT_BY_SCENE_AND_GOAL: True
+  EPISODE_STRIDE: 1
+  SORT_BY_SCENE_AND_GOAL: False
 
 
 REPRESENTATION_GENERATOR:
-  # data_generator_name: clip
-  data_generator_name: non_visual
-  output_zarr_path: pvr_data/one_percent/non_visual_data
+  data_generator_name: clip
+  # data_generator_name: non_visual
+  output_zarr_path: temp/one_percent/non_visual_data
+  # output_zarr_path: pvr_data/one_percent/non_visual_data
   batch_chunk_size: 1000
   save_non_visual_obs: False
+
+PVR:
+  pvr_data_path: "pvr_data/one_percent/clip_data"
+  non_visual_obs_data_path: "pvr_data/one_percent/non_visual_data"
+  pvr_keys: ["last_two_hidden_layers"]
+  non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
+  obs_keys: ["gps", "objectgoal", "compass", "next_actions", "inflection_weight", "last_two_hidden_layers"]

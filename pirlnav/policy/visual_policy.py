@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Optional
 from gym import Space
 from habitat import Config, logger
 from habitat.tasks.nav.nav import EpisodicCompassSensor, EpisodicGPSSensor
@@ -9,6 +10,7 @@ from habitat_baselines.rl.models.rnn_state_encoder import build_rnn_state_encode
 from habitat_baselines.rl.ppo import Net
 
 from pirlnav.policy.policy import ILPolicy
+from pirlnav.policy.pvr_encoder import PvrEncoder
 from pirlnav.policy.transforms import get_transform
 from pirlnav.policy.visual_encoder import VisualEncoder
 from pirlnav.utils.utils import load_encoder
@@ -33,6 +35,9 @@ class ObjectNavILMAENet(Net):
         hidden_size: int,
         rnn_type: str,
         num_recurrent_layers: int,
+        use_pvr_encoder: bool = False,
+        pvr_token_dim: Optional[int] = None,
+        pvr_obs_keys: Optional[list] = None,
     ):
         super().__init__()
         self.policy_config = policy_config
@@ -49,44 +54,20 @@ class ObjectNavILMAENet(Net):
             rgb_config.randomize_augmentations_over_envs
         )
 
-        self.visual_encoder = VisualEncoder(
-            image_size=rgb_config.image_size,
-            backbone=rgb_config.backbone,
-            input_channels=3,
-            resnet_baseplanes=rgb_config.resnet_baseplanes,
-            resnet_ngroups=rgb_config.resnet_baseplanes // 2,
-            avgpooled_image=rgb_config.avgpooled_image,
-            drop_path_rate=rgb_config.drop_path_rate,
-        )
-
-        self.visual_fc = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(
-                self.visual_encoder.output_size,
-                policy_config.RGB_ENCODER.hidden_size,
-            ),
-            nn.ReLU(True),
-        )
-
-        rnn_input_size += policy_config.RGB_ENCODER.hidden_size
-        logger.info(
-            "RGB encoder is {}".format(policy_config.RGB_ENCODER.backbone)
-        )
+        self.use_pvr_encoder = use_pvr_encoder
+        self.pvr_obs_keys = pvr_obs_keys
 
         if EpisodicGPSSensor.cls_uuid in observation_space.spaces:
-            input_gps_dim = observation_space.spaces[
-                EpisodicGPSSensor.cls_uuid
-            ].shape[0]
+            input_gps_dim = observation_space.spaces[EpisodicGPSSensor.cls_uuid].shape[
+                0
+            ]
             self.gps_embedding = nn.Linear(input_gps_dim, 32)
             rnn_input_size += 32
             logger.info("\n\nSetting up GPS sensor")
 
         if EpisodicCompassSensor.cls_uuid in observation_space.spaces:
             assert (
-                observation_space.spaces[EpisodicCompassSensor.cls_uuid].shape[
-                    0
-                ]
-                == 1
+                observation_space.spaces[EpisodicCompassSensor.cls_uuid].shape[0] == 1
             ), "Expected compass with 2D rotation."
             input_compass_dim = 2  # cos and sin of the angle
             self.compass_embedding_dim = 32
@@ -98,17 +79,10 @@ class ObjectNavILMAENet(Net):
 
         if ObjectGoalSensor.cls_uuid in observation_space.spaces:
             self._n_object_categories = (
-                int(
-                    observation_space.spaces[ObjectGoalSensor.cls_uuid].high[0]
-                )
-                + 1
+                int(observation_space.spaces[ObjectGoalSensor.cls_uuid].high[0]) + 1
             )
-            logger.info(
-                "Object categories: {}".format(self._n_object_categories)
-            )
-            self.obj_categories_embedding = nn.Embedding(
-                self._n_object_categories, 32
-            )
+            logger.info("Object categories: {}".format(self._n_object_categories))
+            self.obj_categories_embedding = nn.Embedding(self._n_object_categories, 32)
             rnn_input_size += 32
             logger.info("\n\nSetting up Object Goal sensor")
 
@@ -116,17 +90,46 @@ class ObjectNavILMAENet(Net):
             self.prev_action_embedding = nn.Embedding(num_actions + 1, 32)
             rnn_input_size += self.prev_action_embedding.embedding_dim
 
+        if use_pvr_encoder:
+            self.non_visual_embedding = nn.Linear(rnn_input_size, pvr_token_dim)
+            self.pvr_encoder = PvrEncoder(
+                pvr_token_dim,
+                policy_config.PVR_ENCODER.num_heads,
+                policy_config.PVR_ENCODER.num_layers,
+                policy_config.PVR_ENCODER.dropout,
+            )
+            # policy_config.RGB_ENCODER.hidden_size
+            rnn_input_size += pvr_token_dim
+        else:
+            self.visual_encoder = VisualEncoder(
+                image_size=rgb_config.image_size,
+                backbone=rgb_config.backbone,
+                input_channels=3,
+                resnet_baseplanes=rgb_config.resnet_baseplanes,
+                resnet_ngroups=rgb_config.resnet_baseplanes // 2,
+                avgpooled_image=rgb_config.avgpooled_image,
+                drop_path_rate=rgb_config.drop_path_rate,
+            )
+
+            self.visual_fc = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(
+                    self.visual_encoder.output_size,
+                    policy_config.RGB_ENCODER.hidden_size,
+                ),
+                nn.ReLU(True),
+            )
+
+            rnn_input_size += policy_config.RGB_ENCODER.hidden_size
+            logger.info("RGB encoder is {}".format(policy_config.RGB_ENCODER.backbone))
+
         self.rnn_input_size = rnn_input_size
 
         # load pretrained weights
         if rgb_config.pretrained_encoder is not None:
-            msg = load_encoder(
-                self.visual_encoder, rgb_config.pretrained_encoder
-            )
+            msg = load_encoder(self.visual_encoder, rgb_config.pretrained_encoder)
             logger.info(
-                "Using weights from {}: {}".format(
-                    rgb_config.pretrained_encoder, msg
-                )
+                "Using weights from {}: {}".format(rgb_config.pretrained_encoder, msg)
             )
 
         # freeze backbone
@@ -167,24 +170,8 @@ class ObjectNavILMAENet(Net):
         depth_embedding: [batch_size x DEPTH_ENCODER.output_size]
         rgb_embedding: [batch_size x RGB_ENCODER.output_size]
         """
-        rgb_obs = observations["rgb"]
-
         N = rnn_hidden_states.size(1)
-
         x = []
-
-        if self.visual_encoder is not None:
-            if len(rgb_obs.size()) == 5:
-                observations["rgb"] = rgb_obs.contiguous().view(
-                    -1, rgb_obs.size(2), rgb_obs.size(3), rgb_obs.size(4)
-                )
-            # visual encoder
-            rgb = observations["rgb"]
-
-            rgb = self.visual_transform(rgb, N)
-            rgb = self.visual_encoder(rgb)
-            rgb = self.visual_fc(rgb)
-            x.append(rgb)
 
         if EpisodicGPSSensor.cls_uuid in observations:
             obs_gps = observations[EpisodicGPSSensor.cls_uuid]
@@ -195,9 +182,7 @@ class ObjectNavILMAENet(Net):
         if EpisodicCompassSensor.cls_uuid in observations:
             obs_compass = observations["compass"]
             if len(obs_compass.size()) == 3:
-                obs_compass = obs_compass.contiguous().view(
-                    -1, obs_compass.size(2)
-                )
+                obs_compass = obs_compass.contiguous().view(-1, obs_compass.size(2))
             compass_observations = torch.stack(
                 [
                     torch.cos(obs_compass),
@@ -213,9 +198,7 @@ class ObjectNavILMAENet(Net):
         if ObjectGoalSensor.cls_uuid in observations:
             object_goal = observations[ObjectGoalSensor.cls_uuid].long()
             if len(object_goal.size()) == 3:
-                object_goal = object_goal.contiguous().view(
-                    -1, object_goal.size(2)
-                )
+                object_goal = object_goal.contiguous().view(-1, object_goal.size(2))
             x.append(self.obj_categories_embedding(object_goal).squeeze(dim=1))
 
         if self.policy_config.SEQ2SEQ.use_prev_action:
@@ -223,6 +206,31 @@ class ObjectNavILMAENet(Net):
                 ((prev_actions.float() + 1) * masks).long().view(-1)
             )
             x.append(prev_actions_embedding)
+
+        nv_obs = torch.cat(x, dim=1)
+        if self.use_pvr_encoder:
+            nv_tokens = self.non_visual_embedding(nv_obs).unsqueeze(1)
+            # TODO: This won't work for PVR tokens of different shape. Need dict of
+            # PVR encoders instead.
+            # TODO: For multi-PVR, use single encoder and project to same
+            # dimensionality?
+            pvr_tokens = torch.cat([observations[k] for k in self.pvr_obs_keys])
+            print(pvr_tokens.shape)
+            pvr_embedding = self.pvr_encoder(pvr_tokens, nv_tokens)
+            x.append(pvr_embedding)
+        elif self.visual_encoder is not None:
+            rgb_obs = observations["rgb"]
+            if len(rgb_obs.size()) == 5:
+                observations["rgb"] = rgb_obs.contiguous().view(
+                    -1, rgb_obs.size(2), rgb_obs.size(3), rgb_obs.size(4)
+                )
+            # visual encoder
+            rgb = observations["rgb"]
+
+            rgb = self.visual_transform(rgb, N)
+            rgb = self.visual_encoder(rgb)
+            rgb = self.visual_fc(rgb)
+            x.append(rgb)
 
         x = torch.cat(x, dim=1)
 
@@ -244,6 +252,9 @@ class ObjectNavILMAEPolicy(ILPolicy):
         hidden_size: int,
         rnn_type: str,
         num_recurrent_layers: int,
+        use_pvr_encoder: bool = False,
+        pvr_token_dim: Optional[int] = None,
+        pvr_obs_keys: Optional[list] = None,
     ):
         super().__init__(
             ObjectNavILMAENet(
@@ -254,6 +265,9 @@ class ObjectNavILMAEPolicy(ILPolicy):
                 hidden_size=hidden_size,
                 rnn_type=rnn_type,
                 num_recurrent_layers=num_recurrent_layers,
+                use_pvr_encoder=use_pvr_encoder,
+                pvr_token_dim=pvr_token_dim,
+                pvr_obs_keys=pvr_obs_keys,
             ),
             action_space.n,
             no_critic=policy_config.CRITIC.no_critic,
@@ -262,7 +276,14 @@ class ObjectNavILMAEPolicy(ILPolicy):
         )
 
     @classmethod
-    def from_config(cls, config: Config, observation_space, action_space):
+    def from_config(
+        cls,
+        config: Config,
+        observation_space,
+        action_space,
+        use_pvr_encoder=False,
+        pvr_token_dim=None,
+    ):
         return cls(
             observation_space=observation_space,
             action_space=action_space,
@@ -271,6 +292,9 @@ class ObjectNavILMAEPolicy(ILPolicy):
             hidden_size=config.POLICY.STATE_ENCODER.hidden_size,
             rnn_type=config.POLICY.STATE_ENCODER.rnn_type,
             num_recurrent_layers=config.POLICY.STATE_ENCODER.num_recurrent_layers,
+            use_pvr_encoder=use_pvr_encoder,
+            pvr_token_dim=pvr_token_dim,
+            pvr_obs_keys=config.TASK_CONFIG.PVR.pvr_keys,
         )
 
     @property

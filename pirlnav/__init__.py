@@ -1,4 +1,4 @@
-from pirlnav import il_trainer  # noqa
+from pirlnav import il_trainer, pvr_il_trainer  # noqa
 from pirlnav import reward  # noqa
 from pirlnav import environment, ppo_trainer
 from pirlnav.dataset import dataset  # noqa

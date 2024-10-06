@@ -1,5 +1,3 @@
-import random
-import time
 import numpy as np
 import torch
 import zarr
@@ -9,10 +7,10 @@ from PIL import Image
 
 from habitat.utils.env_utils import construct_envs
 from habitat.core.environments import get_env_class
-from pirlnav.config import get_config
 
 from transformers import CLIPVisionModel, AutoProcessor
 
+# TODO: Change generator to return dict of tensors
 
 class RepresentationGenerator:
 
@@ -48,7 +46,8 @@ class RepresentationGenerator:
     def _init_zarr_file(self, data_names, data):
         self._zarr_file = zarr.open(self._output_zarr_path, mode="w")
         self._data_group = self._zarr_file.create_group("data")
-        self._meta_group = self._zarr_file.create_group("meta")
+        # In older versions of zarr, "meta*" names are reserved, so prefix with "_": 
+        self._meta_group = self._zarr_file.create_group("_meta")
 
         for name, data_array in zip(data_names, data):
             chunks = [None] * len(data_array.shape)
@@ -98,6 +97,8 @@ class RepresentationGenerator:
             # If done, save the episode (the current obs is for the next ep):
             for ep, done in zip(rollout_data, dones):
                 if done:
+                    # Each element of ep is a list of different data types. Concat each
+                    # data type into a separate array:
                     data = [np.stack([d[i] for d in ep]) for i in range(len(ep[0]))]
                     self._save_data(data)
                     ep.clear()
@@ -130,7 +131,7 @@ class ClipGenerator:
         self._c = 0
 
     @torch.no_grad()
-    def generate(self, observations, rewards, dones, infos):
+    def generate(self, observations, rewards, dones, infos, return_tensors=False):
         images = [Image.fromarray(o["rgb"]) for o in observations]
 
         # Save the images:
@@ -148,6 +149,9 @@ class ClipGenerator:
 
             clip_embeddings.append(outputs[1])
             last_two_hidden_layers.append(torch.stack(outputs[2][-2:], dim=1))
+
+        if return_tensors:
+            return torch.cat(clip_embeddings), torch.cat(last_two_hidden_layers)
 
         clip_embeddings = torch.cat(clip_embeddings).detach().cpu().numpy()
         last_two_hidden_layers = (
@@ -169,11 +173,10 @@ class NonVisualObservationsGenerator:
         ]
         self.data_names = [
             *self._obs_keys,
+            "reward",
             "done",
-            "info",
         ]
 
-    @torch.no_grad()
     def generate(self, observations, rewards, dones, infos):
         obs_data = [[obs[key] for key in self._obs_keys] for obs in observations]
         return [
