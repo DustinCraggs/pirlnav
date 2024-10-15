@@ -22,9 +22,9 @@ def make_env_fn(
         config = config.TASK_CONFIG
     dataset = make_dataset(config.DATASET.TYPE, config=config.DATASET)
 
+    episodes = dataset.episodes
     if config.DATASET.SORT_BY_SCENE_AND_GOAL:
         # Sort episodes by scene and goal:
-        episodes = dataset.episodes
         episodes.sort(key=lambda x: (x.scene_id, x.object_category))
 
     # Sample every EPISODE_STRIDE-th episode:

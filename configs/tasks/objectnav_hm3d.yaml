@@ -75,13 +75,11 @@ DATASET:
 REPRESENTATION_GENERATOR:
   data_generator_name: clip
   # data_generator_name: non_visual
-  output_zarr_path: temp/one_percent/non_visual_data
-  # output_zarr_path: pvr_data/one_percent/non_visual_data
+  output_zarr_path: /STORAGE/dc/pvr_data/test/clip_data
   batch_chunk_size: 1000
-  save_non_visual_obs: False
 
 PVR:
-  pvr_data_path: "pvr_data/one_percent/clip_data"
+  pvr_data_path: "pvr_data/one_percent_two/clip_data"
   non_visual_obs_data_path: "pvr_data/one_percent/non_visual_data"
   pvr_keys: ["last_two_hidden_layers"]
   non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]

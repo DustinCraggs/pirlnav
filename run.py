@@ -33,6 +33,12 @@ def main():
         help="path to config yaml containing info about experiment",
     )
     parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Set the random seed for the experiment",
+    )
+    parser.add_argument(
         "opts",
         default=None,
         nargs=argparse.REMAINDER,

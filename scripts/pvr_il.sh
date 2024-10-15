@@ -33,5 +33,11 @@ python -u -m torch.distributed.launch \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
     IL.BehaviorCloning.num_mini_batch 1 \
-    POLICY.PVR_ENCODER.num_heads 12 \
-    RL.DDPPO.force_distributed True
+    POLICY.PVR_ENCODER.num_heads 4 \
+    RL.DDPPO.force_distributed True \
+    TASK_CONFIG.PVR.pvr_data_path "/storage/dc/pvr_data/ten_percent/clip_data" \
+    TASK_CONFIG.PVR.non_visual_obs_data_path "/storage/dc/pvr_data/ten_percent/non_visual_data"
+
+    # TASK_CONFIG.PVR.pvr_data_path "pvr_data/one_percent_two/clip_data" \
+    # TASK_CONFIG.PVR.non_visual_obs_data_path "pvr_data/one_percent/non_visual_data" \
+

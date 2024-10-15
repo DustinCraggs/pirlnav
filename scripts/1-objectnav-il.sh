@@ -29,6 +29,7 @@ python -u -m torch.distributed.launch \
     --run-type train \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
+    WB.RUN_NAME $1 \
     NUM_UPDATES 20000 \
     NUM_ENVIRONMENTS 16 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \

@@ -61,6 +61,7 @@ from pirlnav.pvr_dataset import get_pvr_dataset
 
 
 # TODO:
+# - Reduce precision of saved datasets
 # - Policy eval
 # - Each worker is training on the same data. Need to use a random offset for first
 # dataloader.
@@ -254,6 +255,18 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             max_grad_norm=il_cfg.max_grad_norm,
             wd=il_cfg.wd,
             entropy_coef=il_cfg.entropy_coef,
+        )
+
+
+    def _init_envs(self, config=None, shuffle_scenes: bool = True) -> None:
+        if config is None:
+            config = self.config
+
+        self.envs = construct_envs(
+            config,
+            get_env_class(config.ENV_NAME),
+            workers_ignore_signals=is_slurm_batch_job(),
+            shuffle_scenes=shuffle_scenes,
         )
 
     def _init_train(self):
@@ -677,6 +690,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         config.defrost()
         config.TASK_CONFIG.DATASET.SPLIT = config.EVAL.SPLIT
         config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
+        # Set to v2 when using the training dataset:
+        # config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v2"
         config.freeze()
 
         if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
@@ -688,7 +703,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         if config.VERBOSE:
             logger.info(f"env config: {config}")
 
-        self._init_envs(config)
+        self._init_envs(config, shuffle_scenes=False)
 
         action_space = self.action_space
         if self.using_velocity_ctrl:
@@ -784,7 +799,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         self.actor_critic.eval()
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
             current_episodes = self.envs.current_episodes()
-
             # Add PVR to batch:
             pvrs = data_generator.generate(
                 observations,
@@ -859,6 +873,15 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
                 # episode ended
                 if not not_done_masks[i].item():
+
+                    # print("------------------------------------------------------------------")
+                    # print("------------------------------------------------------------------")
+                    # print("------------------------------------------------------------------")
+                    # print("------------------------------------------------------------------")
+                    # print("------------------------------------------------------------------")
+                    # print("------------------------------------------------------------------")
+                    # print(current_episodes)
+                    
                     pbar.update()
                     episode_stats = {"reward": current_episode_reward[i].item()}
                     episode_stats.update(self._extract_scalars_from_info(infos[i]))
@@ -872,11 +895,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     ] = episode_stats
 
                     if len(self.config.VIDEO_OPTION) > 0:
+                        ep_id = f"{current_episodes[i].scene_id.replace('/','_')}_{current_episodes[i].episode_id}"
                         generate_video(
                             video_option=self.config.VIDEO_OPTION,
                             video_dir=self.config.VIDEO_DIR,
                             images=rgb_frames[i],
-                            episode_id=current_episodes[i].episode_id,
+                            episode_id=ep_id,
+                            # episode_id=current_episodes[i].episode_id,
                             checkpoint_idx=checkpoint_index,
                             metrics=self._extract_scalars_from_info(infos[i]),
                             fps=self.config.VIDEO_FPS,

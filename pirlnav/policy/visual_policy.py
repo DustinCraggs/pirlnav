@@ -173,6 +173,11 @@ class ObjectNavILMAENet(Net):
         N = rnn_hidden_states.size(1)
         x = []
 
+        # print(observations)
+        # print(rnn_hidden_states)
+        # print(prev_actions)
+        # print(masks)
+
         if EpisodicGPSSensor.cls_uuid in observations:
             obs_gps = observations[EpisodicGPSSensor.cls_uuid]
             if len(obs_gps.size()) == 3:
@@ -215,7 +220,6 @@ class ObjectNavILMAENet(Net):
             # TODO: For multi-PVR, use single encoder and project to same
             # dimensionality?
             pvr_tokens = torch.cat([observations[k] for k in self.pvr_obs_keys])
-            print(pvr_tokens.shape)
             pvr_embedding = self.pvr_encoder(pvr_tokens, nv_tokens)
             x.append(pvr_embedding)
         elif self.visual_encoder is not None:

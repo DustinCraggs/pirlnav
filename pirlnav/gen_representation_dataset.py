@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import zarr
@@ -11,6 +12,7 @@ from habitat.core.environments import get_env_class
 from transformers import CLIPVisionModel, AutoProcessor
 
 # TODO: Change generator to return dict of tensors
+
 
 class RepresentationGenerator:
 
@@ -29,6 +31,9 @@ class RepresentationGenerator:
         elif data_generator_name == "non_visual":
             self._data_generator = NonVisualObservationsGenerator()
 
+        self._c = 0
+
+
     def _init_envs(self, config):
         config.defrost()
         config.TASK_CONFIG.TASK.SENSORS.extend(
@@ -46,7 +51,7 @@ class RepresentationGenerator:
     def _init_zarr_file(self, data_names, data):
         self._zarr_file = zarr.open(self._output_zarr_path, mode="w")
         self._data_group = self._zarr_file.create_group("data")
-        # In older versions of zarr, "meta*" names are reserved, so prefix with "_": 
+        # In older versions of zarr, "meta*" names are reserved, so prefix with "_":
         self._meta_group = self._zarr_file.create_group("_meta")
 
         for name, data_array in zip(data_names, data):
@@ -87,12 +92,29 @@ class RepresentationGenerator:
         while ep_count < total_num_eps:
             # "next_actions" contains the actions from the BC dataset:
             actions = [o["next_actions"] for o in observations]
+            previous_episodes = self.envs.current_episodes()
             outputs = self.envs.step(actions)
             observations, rewards, dones, infos = zip(*outputs)
+
+            # Save the images:
+            # images = [Image.fromarray(o["rgb"]) for o in observations]
+            # for i, img in enumerate(images):
+            #     current_ep = self.envs.current_episodes()[i]
+            #     scene, ep = current_ep.scene_id, current_ep.episode_id
+            #     scene = scene.replace("/", "_")
+            #     os.makedirs(f"img/one_pc/scene_{scene}/ep_{ep}", exist_ok=True)
+            #     img.save(f"img/one_pc/scene_{scene}/ep_{ep}/step_{self._c}.png")
+            # self._c += 1
 
             step_data = self._data_generator.generate(
                 observations, rewards, dones, infos
             )
+
+            for episode, done in zip(previous_episodes, dones):
+                if done:
+                    print("Done")
+                    print(f"Episode {episode.episode_id}")
+                    print(f"Scene: {episode.scene_id}")
 
             # If done, save the episode (the current obs is for the next ep):
             for ep, done in zip(rollout_data, dones):
@@ -128,16 +150,10 @@ class ClipGenerator:
             "clip_embedding",
             "last_two_hidden_layers",
         ]
-        self._c = 0
 
     @torch.no_grad()
     def generate(self, observations, rewards, dones, infos, return_tensors=False):
         images = [Image.fromarray(o["rgb"]) for o in observations]
-
-        # Save the images:
-        for i, img in enumerate(images):
-            img.save(f"temp_images_1/env_{i}_step_{self._c}.png")
-        self._c += 1
 
         clip_embeddings = []
         last_two_hidden_layers = []
