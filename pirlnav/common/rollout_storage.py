@@ -55,24 +55,17 @@ class RolloutStorage:
             else:
                 action_shape = action_space.shape
 
-        self.buffers["actions"] = torch.zeros(
-            numsteps + 1, num_envs, *action_shape
-        )
+        self.buffers["actions"] = torch.zeros(numsteps + 1, num_envs, *action_shape)
         self.buffers["prev_actions"] = torch.zeros(
             numsteps + 1, num_envs, *action_shape
         )
-        if (
-            discrete_actions
-            and action_space.__class__.__name__ == "ActionSpace"
-        ):
+        if discrete_actions and action_space.__class__.__name__ == "ActionSpace":
             assert isinstance(self.buffers["actions"], torch.Tensor)
             assert isinstance(self.buffers["prev_actions"], torch.Tensor)
             self.buffers["actions"] = self.buffers["actions"].long()
             self.buffers["prev_actions"] = self.buffers["prev_actions"].long()
 
-        self.buffers["masks"] = torch.zeros(
-            numsteps + 1, num_envs, 1, dtype=torch.bool
-        )
+        self.buffers["masks"] = torch.zeros(numsteps + 1, num_envs, 1, dtype=torch.bool)
 
         self.is_double_buffered = is_double_buffered
         self._nbuffers = 2 if is_double_buffered else 1
@@ -146,18 +139,14 @@ class RolloutStorage:
 
         self.buffers[0] = self.buffers[self.current_rollout_step_idx]
 
-        self.current_rollout_step_idxs = [
-            0 for _ in self.current_rollout_step_idxs
-        ]
+        self.current_rollout_step_idxs = [0 for _ in self.current_rollout_step_idxs]
 
     def recurrent_generator(self, num_mini_batch) -> Iterator[TensorDict]:
         num_environments = self.buffers["actions"].size(1)
         assert num_environments >= num_mini_batch, (
             "Trainer requires the number of environments ({}) "
             "to be greater than or equal to the number of "
-            "trainer mini batches ({}).".format(
-                num_environments, num_mini_batch
-            )
+            "trainer mini batches ({}).".format(num_environments, num_mini_batch)
         )
         if num_environments % num_mini_batch != 0:
             warnings.warn(
@@ -169,8 +158,6 @@ class RolloutStorage:
             )
         for inds in torch.arange(num_environments).chunk(num_mini_batch):
             batch = self.buffers[0 : self.current_rollout_step_idx, inds]
-            batch["recurrent_hidden_states"] = self.recurrent_hidden_states[
-                0:1, inds
-            ]
+            batch["recurrent_hidden_states"] = self.recurrent_hidden_states[0:1, inds]
 
             yield batch.map(lambda v: v.flatten(0, 1))

@@ -32,14 +32,18 @@ python -u -m torch.distributed.launch \
     --run-type train \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
-    WB.RUN_NAME $2 \
     NUM_UPDATES 800000 \
-    NUM_ENVIRONMENTS 8 \
+    NUM_ENVIRONMENTS 32 \
+    IL.BehaviorCloning.num_steps 64 \
+    IL.BehaviorCloning.num_mini_batch 32 \
+    IL.BehaviorCloning.use_gradient_accumulation True \
+    IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
+    RL.DDPPO.force_distributed True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
-    IL.BehaviorCloning.num_mini_batch 2 \
-    RL.DDPPO.force_distributed True \
+    WB.RUN_NAME $2 \
+    WB.GROUP pirlnav_orig_bc \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     NUM_CHECKPOINTS -1 \
-    CHECKPOINT_INTERVAL 5000 \
-    # RL.DDPPO.train_encoder False \
+    CHECKPOINT_INTERVAL 4000 \
+    POLICY.RGB_ENCODER.normalize_visual_inputs True \

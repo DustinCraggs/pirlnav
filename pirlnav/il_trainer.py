@@ -302,12 +302,28 @@ class ILEnvDDPTrainer(PPOTrainer):
 
         self.agent.train()
 
+        il_cfg = self.config.IL.BehaviorCloning
+        accumulate_gradients = il_cfg.use_gradient_accumulation
+        num_accum_steps = il_cfg.num_accumulated_gradient_steps
+
         (
             action_loss,
             rnn_hidden_states,
             dist_entropy,
-            _,
-        ) = self.agent.update(self.rollouts)
+            actual_action_loss,
+            accum_loss,
+        ) = self.agent.update(self.rollouts, accumulate_gradients, num_accum_steps)
+
+        num_updates = self.num_updates_done + 1
+
+        if accumulate_gradients and (num_updates % num_accum_steps) == 0:
+            self.agent.apply_accumulated_gradients()
+
+            if il_cfg.use_linear_lr_decay:
+                self.lr_scheduler.step()  # type: ignore
+
+        if not accumulate_gradients and il_cfg.use_linear_lr_decay:
+            self.lr_scheduler.step()  # type: ignore
 
         self.rollouts.after_update(rnn_hidden_states)
         self.pth_time += time.time() - t_update_model
@@ -315,6 +331,8 @@ class ILEnvDDPTrainer(PPOTrainer):
         return (
             action_loss,
             dist_entropy,
+            actual_action_loss,
+            accum_loss,
         )
 
     @profiling_wrapper.RangeContext("train")
@@ -330,7 +348,7 @@ class ILEnvDDPTrainer(PPOTrainer):
         count_checkpoints = 0
         prev_time = 0
 
-        lr_scheduler = LambdaLR(
+        self.lr_scheduler = LambdaLR(
             optimizer=self.agent.optimizer,
             lr_lambda=lambda x: 1 - self.percent_done(),
         )
@@ -339,7 +357,7 @@ class ILEnvDDPTrainer(PPOTrainer):
         if resume_state is not None:
             self.agent.load_state_dict(resume_state["state_dict"])
             self.agent.optimizer.load_state_dict(resume_state["optim_state"])
-            lr_scheduler.load_state_dict(resume_state["lr_sched_state"])
+            self.lr_scheduler.load_state_dict(resume_state["lr_sched_state"])
 
             requeue_stats = resume_state["requeue_stats"]
             self.env_time = requeue_stats["env_time"]
@@ -387,7 +405,7 @@ class ILEnvDDPTrainer(PPOTrainer):
                         dict(
                             state_dict=self.agent.state_dict(),
                             optim_state=self.agent.optimizer.state_dict(),
-                            lr_sched_state=lr_scheduler.state_dict(),
+                            lr_sched_state=self.lr_scheduler.state_dict(),
                             config=self.config,
                             requeue_stats=requeue_stats,
                         ),
@@ -442,16 +460,17 @@ class ILEnvDDPTrainer(PPOTrainer):
                 (
                     action_loss,
                     dist_entropy,
+                    actual_action_loss,
+                    total_accumulated_loss,
                 ) = self._update_agent()
-
-                if il_cfg.use_linear_lr_decay:
-                    lr_scheduler.step()  # type: ignore
 
                 self.num_updates_done += 1
                 losses = self._coalesce_post_step(
                     dict(
                         action_loss=action_loss,
                         entropy=dist_entropy,
+                        actual_action_loss=actual_action_loss,
+                        total_accumulated_loss=total_accumulated_loss,
                     ),
                     count_steps_delta,
                 )
@@ -484,6 +503,12 @@ class ILEnvDDPTrainer(PPOTrainer):
         writer.add_scalar(
             "reward",
             deltas["reward"] / deltas["count"],
+            self.num_steps_done,
+        )
+
+        writer.add_scalar(
+            "lr",
+            self.lr_scheduler.get_last_lr()[0],
             self.num_steps_done,
         )
 

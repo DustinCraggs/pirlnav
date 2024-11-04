@@ -20,6 +20,7 @@ import tqdm
 from gym import spaces
 from habitat import Config, logger
 from habitat.core.registry import registry
+from habitat.core.environments import get_env_class
 from habitat.utils import profiling_wrapper
 from habitat.utils.render_wrapper import overlay_frame
 from habitat.utils.visualizations.utils import observations_to_image
@@ -58,6 +59,7 @@ from pirlnav.algos.agent import DDPILAgent, ILAgent
 from pirlnav.common.rollout_storage import RolloutStorage
 from pirlnav.gen_representation_dataset import ClipGenerator
 from pirlnav.pvr_dataset import get_pvr_dataset
+from pirlnav.utils.env_utils import construct_envs
 
 
 # TODO:
@@ -256,7 +258,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             wd=il_cfg.wd,
             entropy_coef=il_cfg.entropy_coef,
         )
-
 
     def _init_envs(self, config=None, shuffle_scenes: bool = True) -> None:
         if config is None:
@@ -881,7 +882,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     # print("------------------------------------------------------------------")
                     # print("------------------------------------------------------------------")
                     # print(current_episodes)
-                    
+
                     pbar.update()
                     episode_stats = {"reward": current_episode_reward[i].item()}
                     episode_stats.update(self._extract_scalars_from_info(infos[i]))

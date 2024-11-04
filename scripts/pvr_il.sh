@@ -27,13 +27,14 @@ python -u -m torch.distributed.launch \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
     WB.RUN_NAME $1 \
     TRAINER_NAME "pvr-pirlnav-il" \
-    NUM_UPDATES 200000 \
+    NUM_UPDATES 800000 \
     NUM_ENVIRONMENTS 1 \
-    IL.BehaviorCloning.num_steps 512 \
+    IL.BehaviorCloning.num_steps 1028 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
     IL.BehaviorCloning.num_mini_batch 1 \
     POLICY.PVR_ENCODER.num_heads 4 \
+    NUM_CHECKPOINTS 100 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.PVR.pvr_data_path "/storage/dc/pvr_data/ten_percent/clip_data" \
     TASK_CONFIG.PVR.non_visual_obs_data_path "/storage/dc/pvr_data/ten_percent/non_visual_data"

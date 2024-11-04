@@ -47,9 +47,7 @@ class ILAgent(nn.Module):
                     visual_encoder_params.append(param)
                 else:
                     other_params.append(param)
-        logger.info(
-            "Visual Encoder params: {}".format(len(visual_encoder_params))
-        )
+        logger.info("Visual Encoder params: {}".format(len(visual_encoder_params)))
         logger.info("Other params: {}".format(len(other_params)))
 
         if optimizer == "AdamW":
@@ -64,11 +62,7 @@ class ILAgent(nn.Module):
             )
         else:
             self.optimizer = optim.Adam(
-                list(
-                    filter(
-                        lambda p: p.requires_grad, actor_critic.parameters()
-                    )
-                ),
+                list(filter(lambda p: p.requires_grad, actor_critic.parameters())),
                 lr=lr,
                 eps=eps,
             )
@@ -77,10 +71,16 @@ class ILAgent(nn.Module):
     def forward(self, *x):
         raise NotImplementedError
 
-    def update(self, rollouts) -> Tuple[float, float, float]:
+    def update(
+        self,
+        rollouts,
+        accumulate_gradients=False,
+        num_accum_steps=None,
+    ) -> Tuple[float, float, float]:
         total_loss_epoch = 0.0
         total_entropy = 0.0
         total_action_loss = 0.0
+        total_accumulated_loss = 0.0
 
         profiling_wrapper.range_push("BC.update epoch")
         data_generator = rollouts.recurrent_generator(self.num_mini_batch)
@@ -107,10 +107,12 @@ class ILAgent(nn.Module):
             )
             entropy_term = dist_entropy * self.entropy_coef
 
-            self.optimizer.zero_grad()
-            inflections_batch = batch["observations"][
-                "inflection_weight"
-            ].view(T, N, -1)
+            if not accumulate_gradients:
+                self.optimizer.zero_grad()
+
+            inflections_batch = batch["observations"]["inflection_weight"].view(
+                T, N, -1
+            )
 
             action_loss_term = (
                 (inflections_batch * action_loss.unsqueeze(-1)).sum(0)
@@ -118,17 +120,24 @@ class ILAgent(nn.Module):
             ).mean()
             total_loss = action_loss_term - entropy_term
 
+            total_loss_epoch += total_loss.item()
+            total_action_loss += action_loss_term.item()
+            total_entropy += dist_entropy.item()
+
+            if accumulate_gradients:
+                total_loss /= num_accum_steps
+
             self.before_backward(total_loss)
             total_loss.backward()
             self.after_backward(total_loss)
 
-            self.before_step()
-            self.optimizer.step()
-            self.after_step()
+            total_accumulated_loss = total_loss.item()
 
-            total_loss_epoch += total_loss.item()
-            total_action_loss += action_loss_term.item()
-            total_entropy += dist_entropy.item()
+            if not accumulate_gradients:
+                self.before_step()
+                self.optimizer.step()
+                self.after_step()
+
             hidden_states.append(rnn_hidden_states)
 
         profiling_wrapper.range_pop()
@@ -144,7 +153,14 @@ class ILAgent(nn.Module):
             hidden_states,
             total_entropy,
             total_action_loss,
+            total_accumulated_loss,
         )
+
+    def apply_accumulated_gradients(self) -> None:
+        self.before_step()
+        self.optimizer.step()
+        self.after_step()
+        self.optimizer.zero_grad()
 
     def before_backward(self, loss: Tensor) -> None:
         pass
@@ -153,9 +169,7 @@ class ILAgent(nn.Module):
         pass
 
     def before_step(self) -> None:
-        nn.utils.clip_grad_norm_(
-            self.actor_critic.parameters(), self.max_grad_norm
-        )
+        nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
 
     def after_step(self) -> None:
         pass
@@ -177,6 +191,7 @@ class DecentralizedDistributedMixin:
                                    forward pass, otherwise the gradient reduction
                                    will not work correctly.
         """
+
         # NB: Used to hide the hooks from the nn.Module,
         # so they don't show up in the state_dict
         class Guard:
@@ -186,9 +201,7 @@ class DecentralizedDistributedMixin:
                         actor_critic, device_ids=[device], output_device=device
                     )
                 else:
-                    self.ddp = torch.nn.parallel.DistributedDataParallel(
-                        actor_critic
-                    )
+                    self.ddp = torch.nn.parallel.DistributedDataParallel(actor_critic)
 
         self._ddp_hooks = Guard(self.actor_critic, self.device)  # type: ignore
         # self.get_advantages = self._get_advantages_distributed
