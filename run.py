@@ -15,14 +15,17 @@ from habitat.config import Config
 from habitat_baselines.common.baseline_registry import baseline_registry
 
 from pirlnav.config import get_config
-from pirlnav.gen_representation_dataset import RepresentationGenerator
+from pirlnav.gen_representation_dataset import (
+    RepresentationGenerator,
+    generate_episode_split_index,
+)
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--run-type",
-        choices=["train", "eval", "gen"],
+        choices=["train", "eval", "gen", "gen_sub_split"],
         required=True,
         help="run type of the experiment (train or eval)",
     )
@@ -87,6 +90,8 @@ def execute_exp(config: Config, run_type: str, seed=None) -> None:
     elif run_type == "gen":
         generator = RepresentationGenerator(config)
         generator.generate()
+    elif run_type == "gen_sub_split":
+        generate_episode_split_index(config)
 
 
 def run_exp(exp_config: str, run_type: str, seed=None, opts=None) -> None:

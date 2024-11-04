@@ -69,13 +69,24 @@ DATASET:
   SCENES_DIR: "data/scene_datasets/"
   MAX_EPISODE_STEPS: 500
   EPISODE_STRIDE: 1
+  SPLIT_EPISODES: False
   SORT_BY_SCENE_AND_GOAL: False
+  SUB_SPLIT_INDEX_PATH: null
 
+SUB_SPLIT_GENERATOR:
+  STRIDE: 10
+  INDEX_PATH: null
 
 REPRESENTATION_GENERATOR:
-  data_generator_name: clip
-  # data_generator_name: non_visual
-  output_zarr_path: /STORAGE/dc/pvr_data/test/clip_data
+  data_generator:
+    name: clip
+    # kwargs:
+    #   model_path: "/data/drive2/models/clip-vit-base-patch32"
+    #   use_float16: True
+
+  # data_generator:
+  #   name: non_visual
+  output_zarr_path: /storage/dc/pvr_data/test/clip_data
   batch_chunk_size: 1000
 
 PVR:

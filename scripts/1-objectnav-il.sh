@@ -10,9 +10,12 @@ config="configs/experiments/il_objectnav.yaml"
 # TENSORBOARD_DIR="tb/objectnav_il/${dataset}/ovrl_resnet50/seed_1/"
 # CHECKPOINT_DIR="data/new_checkpoints/objectnav_il/${dataset}/ovrl_resnet50/seed_1/"
 
-DATA_PATH="../data/habitat/demos/data/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd/"
-TENSORBOARD_DIR="../data/habitat/tb/objectnav_il/test/"
-CHECKPOINT_DIR="../data/checkpoints/objectnav_il/$1/"
+DATA_DIR=$1
+EXP_NAME=$2
+
+DATA_PATH="$1/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
+TENSORBOARD_DIR="$1/tb/objectnav_il/$2/"
+CHECKPOINT_DIR="$1/checkpoints/objectnav_il/$2/"
 INFLECTION_COEF=3.234951275740812
 
 mkdir -p $TENSORBOARD_DIR
@@ -29,12 +32,14 @@ python -u -m torch.distributed.launch \
     --run-type train \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
-    WB.RUN_NAME $1 \
-    NUM_UPDATES 20000 \
-    NUM_ENVIRONMENTS 16 \
+    WB.RUN_NAME $2 \
+    NUM_UPDATES 800000 \
+    NUM_ENVIRONMENTS 8 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
-    IL.BehaviorCloning.num_mini_batch 8 \
+    IL.BehaviorCloning.num_mini_batch 2 \
     RL.DDPPO.force_distributed True \
-    POLICY.RGB_ENCODER.pretrained_encoder data/visual_encoders/omnidata_DINO_02.pth \
+    POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
+    NUM_CHECKPOINTS -1 \
+    CHECKPOINT_INTERVAL 5000 \
     # RL.DDPPO.train_encoder False \

@@ -22,10 +22,11 @@ python -u -m run \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
     EVAL_CKPT_PATH_DIR $EVAL_CHECKPOINT_DIR \
     VIDEO_DIR "video_dir/train/$1/" \
+    WB.GROUP "pvr_eval" \
     WB.RUN_NAME eval_$1 \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT 32 \
     NUM_ENVIRONMENTS 2 \
     TASK_CONFIG.DATASET.SPLIT "train" \
-    TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
+    TASK_CONFIG.SET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     POLICY.PVR_ENCODER.num_heads 4
