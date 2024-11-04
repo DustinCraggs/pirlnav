@@ -25,6 +25,9 @@ EVAL:
 IL:
   POLICY:
     name: "ObjectNavILMAEPolicy"
+  BehaviorCloning:
+    use_gradient_accumulation: False
+    num_accumulated_gradient_steps: null
 
 RL:
   SUCCESS_REWARD: 2.5
