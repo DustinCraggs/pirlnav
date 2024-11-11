@@ -41,7 +41,7 @@ python -u -m torch.distributed.launch \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
-    WB.RUN_NAME $2 \
+    WB.RUN_NAME $EXP_NAME \
     WB.GROUP pirlnav_orig_bc \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     NUM_CHECKPOINTS -1 \

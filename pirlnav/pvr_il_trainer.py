@@ -58,32 +58,31 @@ from torch.utils.data import DataLoader
 from pirlnav.algos.agent import DDPILAgent, ILAgent
 from pirlnav.common.rollout_storage import RolloutStorage
 from pirlnav.gen_representation_dataset import ClipGenerator
-from pirlnav.pvr_dataset import get_pvr_dataset
+from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_pvr_dataset
 from pirlnav.utils.env_utils import construct_envs
 
 
 # TODO:
-# - Reduce precision of saved datasets
-# - Policy eval
 # - Each worker is training on the same data. Need to use a random offset for first
 # dataloader.
-# - Check if dataset is shuffled
+# - Consider shuffling object goals in dataset generation
 # - Use multiple streams from the dataset
 # - Manually inspect obs to ensure they are set
 # TODO Next:
 # - Ensure profiling is working and logged to wandb
 #   - Need to log dataloader time, inference time, training iteration time
 # - Use decoder for last bridge transformer layer
-# - Generate a 10% CLIP dataset
 # - Separate the visual and PVR policies; process nv obs differently for
 #   pvr policy
-# TODO reexamine:
+# Done:
+# - Generate a 10% CLIP dataset
+# - Policy eval
+# - Reduce precision of saved datasets
+# - When running standard IL trainer, disable dataset sorting
 # - Data generation
 #   - Is there roughly uniform distribution of scene-goal pairs? If not, should sample
 #     instead of using stride.
 #   - Is the dataset order shuffled and deterministic?
-# Done:
-# - When running standard IL trainer, disable dataset sorting
 
 
 @baseline_registry.register_trainer(name="pvr-pirlnav-il")
@@ -93,8 +92,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         self.action_space = self._make_action_space()
 
     def _make_action_space(self) -> spaces.Discrete:
-        # TODO: There seems to be no easy way to get the action space without
-        # constructing envs.
         sim_config = self.config.TASK_CONFIG.SIMULATOR
         action_space_name = sim_config.ACTION_SPACE_CONFIG
         action_config = registry.get_action_space_configuration(action_space_name)(
@@ -148,6 +145,15 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
     def _init_demonstration_dataset(self):
         pvr_config = self.config.TASK_CONFIG.PVR
+
+        pvr_dataset = create_pvr_dataset_splits(
+            pvr_config.pvr_data_path,
+            pvr_config.non_visual_obs_data_path,
+            num_splits=10,
+            pvr_keys=pvr_config.pvr_keys,
+            nv_keys=pvr_config.non_visual_keys,
+        )
+        exit()
         pvr_dataset = get_pvr_dataset(
             pvr_config.pvr_data_path,
             pvr_config.non_visual_obs_data_path,
@@ -160,7 +166,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         # the dataset for each "environment".
         # TODO: We need to shuffle the dataset in advance (and store on disk).
         batch_size = self.config.IL.BehaviorCloning.num_steps
-        self._pvr_dataloader = DataLoader(pvr_dataset, batch_size=batch_size)
+        self._pvr_dataloader = DataLoader(
+            pvr_dataset,
+            batch_size=batch_size,
+            num_workers=1,
+            prefetch_factor=10,
+        )
         self._pvr_dataloader_iter = iter(self._pvr_dataloader)
 
         example_batch = next(iter(self._pvr_dataloader))
@@ -454,12 +465,31 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         self.agent.train()
 
+        il_cfg = self.config.IL.BehaviorCloning
+        accumulate_gradients = il_cfg.use_gradient_accumulation
+        num_accum_steps = il_cfg.num_accumulated_gradient_steps
+
         (
             action_loss,
             rnn_hidden_states,
             dist_entropy,
-            _,
-        ) = self.agent.update(self.rollouts)
+            actual_action_loss,
+        ) = self.agent.update(self.rollouts, accumulate_gradients, num_accum_steps)
+
+        num_updates = self.num_updates_done + 1
+        should_apply_gradients = (
+            accumulate_gradients and (num_updates % num_accum_steps) == 0
+        )
+
+        if should_apply_gradients:
+            self.agent.apply_accumulated_gradients()
+
+        # If we applied gradients, that counts as a step (if we're not accumulating it's
+        # always a step). Only step the lr scheduler if a gradient update occurred, to
+        # more closely resemble the behaviour of parallel training.
+        if not accumulate_gradients or should_apply_gradients:
+            if il_cfg.use_linear_lr_decay:
+                self.lr_scheduler.step()  # type: ignore
 
         self.rollouts.after_update(rnn_hidden_states)
         self.pth_time += time.time() - t_update_model
@@ -467,6 +497,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         return (
             action_loss,
             dist_entropy,
+            actual_action_loss,
         )
 
     @profiling_wrapper.RangeContext("train")
@@ -482,7 +513,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         count_checkpoints = 0
         prev_time = 0
 
-        lr_scheduler = LambdaLR(
+        self.lr_scheduler = LambdaLR(
             optimizer=self.agent.optimizer,
             lr_lambda=lambda x: 1 - self.percent_done(),
         )
@@ -491,7 +522,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         if resume_state is not None:
             self.agent.load_state_dict(resume_state["state_dict"])
             self.agent.optimizer.load_state_dict(resume_state["optim_state"])
-            lr_scheduler.load_state_dict(resume_state["lr_sched_state"])
+            self.lr_scheduler.load_state_dict(resume_state["lr_sched_state"])
 
             requeue_stats = resume_state["requeue_stats"]
             self.env_time = requeue_stats["env_time"]
@@ -539,7 +570,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         dict(
                             state_dict=self.agent.state_dict(),
                             optim_state=self.agent.optimizer.state_dict(),
-                            lr_sched_state=lr_scheduler.state_dict(),
+                            lr_sched_state=self.lr_scheduler.state_dict(),
                             config=self.config,
                             requeue_stats=requeue_stats,
                         ),
@@ -564,16 +595,19 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 (
                     action_loss,
                     dist_entropy,
+                    actual_action_loss,
                 ) = self._update_agent()
 
-                if il_cfg.use_linear_lr_decay:
-                    lr_scheduler.step()  # type: ignore
-
+                # With gradient accumulation, the weights may not have actually been
+                # updated this step. However, it still needs to be counted as a step
+                # e.g. for logging and checkpointing purposes.
                 self.num_updates_done += 1
+
                 losses = self._coalesce_post_step(
                     dict(
                         action_loss=action_loss,
                         entropy=dist_entropy,
+                        actual_action_loss=actual_action_loss,
                     ),
                     count_steps_delta,
                 )
@@ -606,6 +640,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             deltas["reward"] / deltas["count"],
             self.num_steps_done,
         )
+
+        writer.add_scalar("lr", self.lr_scheduler.get_last_lr()[0], self.num_steps_done)
+
+        writer.add_scalar("num_updates", self.num_updates_done, self.num_steps_done)
 
         # Check to see if there are any metrics
         # that haven't been logged yet
@@ -690,9 +728,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         config.defrost()
         config.TASK_CONFIG.DATASET.SPLIT = config.EVAL.SPLIT
-        config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
+        # config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
         # Set to v2 when using the training dataset:
-        # config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v2"
+        config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v2"
         config.freeze()
 
         if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
@@ -788,10 +826,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         # Make representation generator:
         generator_config = config.TASK_CONFIG.REPRESENTATION_GENERATOR
-        data_generator_name = generator_config.data_generator_name
+        data_generator_name = generator_config.data_generator.name
 
         if data_generator_name == "clip":
-            data_generator = ClipGenerator()
+            generator_kwargs = generator_config["data_generator"].get("clip_kwargs", {})
+            data_generator = ClipGenerator(**generator_kwargs)
 
         rewards, dones, infos = None, None, None
 
@@ -874,15 +913,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
                 # episode ended
                 if not not_done_masks[i].item():
-
-                    # print("------------------------------------------------------------------")
-                    # print("------------------------------------------------------------------")
-                    # print("------------------------------------------------------------------")
-                    # print("------------------------------------------------------------------")
-                    # print("------------------------------------------------------------------")
-                    # print("------------------------------------------------------------------")
-                    # print(current_episodes)
-
                     pbar.update()
                     episode_stats = {"reward": current_episode_reward[i].item()}
                     episode_stats.update(self._extract_scalars_from_info(infos[i]))
@@ -896,13 +926,16 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     ] = episode_stats
 
                     if len(self.config.VIDEO_OPTION) > 0:
-                        ep_id = f"{current_episodes[i].scene_id.replace('/','_')}_{current_episodes[i].episode_id}"
+                        ep_id = (
+                            f"{current_episodes[i].scene_id.replace('/','_')}_"
+                            f"{current_episodes[i].episode_id}_"
+                            f"{current_episodes[i].object_category}"
+                        )
                         generate_video(
                             video_option=self.config.VIDEO_OPTION,
                             video_dir=self.config.VIDEO_DIR,
                             images=rgb_frames[i],
                             episode_id=ep_id,
-                            # episode_id=current_episodes[i].episode_id,
                             checkpoint_idx=checkpoint_index,
                             metrics=self._extract_scalars_from_info(infos[i]),
                             fps=self.config.VIDEO_FPS,

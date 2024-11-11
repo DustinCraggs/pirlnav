@@ -36,11 +36,11 @@ class RepresentationGenerator:
 
         self._zarr_file = None
         data_generator_name = generator_config["data_generator"]["name"]
-        generator_kwargs = generator_config["data_generator"].get("kwargs", {})
 
         if data_generator_name == "non_visual":
-            self._data_generator = NonVisualObservationsGenerator(**generator_kwargs)
+            self._data_generator = NonVisualObservationsGenerator()
         elif data_generator_name == "clip":
+            generator_kwargs = generator_config["data_generator"].get("clip_kwargs", {})
             self._data_generator = ClipGenerator(**generator_kwargs)
 
         self._c = 0
@@ -139,8 +139,8 @@ class RepresentationGenerator:
             #     current_ep = self.envs.current_episodes()[i]
             #     scene, ep = current_ep.scene_id, current_ep.episode_id
             #     scene = scene.replace("/", "_")
-            #     os.makedirs(f"img/one_pc/scene_{scene}/ep_{ep}", exist_ok=True)
-            #     img.save(f"img/one_pc/scene_{scene}/ep_{ep}/step_{self._c}.png")
+            #     os.makedirs(f"imgs/one_pc/scene_{scene}/ep_{ep}", exist_ok=True)
+            #     img.save(f"imgs/one_pc/scene_{scene}/ep_{ep}/step_{self._c}.png")
             # self._c += 1
 
             step_data = self._data_generator.generate(

@@ -10,11 +10,12 @@ CUDA_VISIBLE_DEVICES=1 python run.py \
     --run-type gen \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $bc_dataset_path \
-    NUM_ENVIRONMENTS 40 \
+    NUM_ENVIRONMENTS 20 \
     TASK_CONFIG.REPRESENTATION_GENERATOR.batch_chunk_size 1000 \
-    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH data/pvr_demos/one_percent/ep_index.json \
+    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH data/pvr_demos/ten_percent/ep_index.json \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name non_visual \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path data/pvr_demos/one_percent/non_visual_data \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path temp/pvr_demos/ten_percent/non_visual_data \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path data/pvr_demos/ten_percent/non_visual_data \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
-    # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path data/pvr_demos/ten_percent/clip \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path data/pvr_demos/ten_percent/clip_data \
 

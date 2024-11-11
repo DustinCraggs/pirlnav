@@ -80,7 +80,6 @@ class ILAgent(nn.Module):
         total_loss_epoch = 0.0
         total_entropy = 0.0
         total_action_loss = 0.0
-        total_accumulated_loss = 0.0
 
         profiling_wrapper.range_push("BC.update epoch")
         data_generator = rollouts.recurrent_generator(self.num_mini_batch)
@@ -131,8 +130,6 @@ class ILAgent(nn.Module):
             total_loss.backward()
             self.after_backward(total_loss)
 
-            total_accumulated_loss = total_loss.item()
-
             if not accumulate_gradients:
                 self.before_step()
                 self.optimizer.step()
@@ -153,7 +150,6 @@ class ILAgent(nn.Module):
             hidden_states,
             total_entropy,
             total_action_loss,
-            total_accumulated_loss,
         )
 
     def apply_accumulated_gradients(self) -> None:

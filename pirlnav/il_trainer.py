@@ -311,19 +311,22 @@ class ILEnvDDPTrainer(PPOTrainer):
             rnn_hidden_states,
             dist_entropy,
             actual_action_loss,
-            accum_loss,
         ) = self.agent.update(self.rollouts, accumulate_gradients, num_accum_steps)
 
         num_updates = self.num_updates_done + 1
+        should_apply_gradients = (
+            accumulate_gradients and (num_updates % num_accum_steps) == 0
+        )
 
-        if accumulate_gradients and (num_updates % num_accum_steps) == 0:
+        if should_apply_gradients:
             self.agent.apply_accumulated_gradients()
 
+        # If we applied gradients, that counts as a step (if we're not accumulating it's
+        # always a step). Only step the lr scheduler if a gradient update occurred, to
+        # more closely resemble the behaviour of parallel training.
+        if not accumulate_gradients or should_apply_gradients:
             if il_cfg.use_linear_lr_decay:
                 self.lr_scheduler.step()  # type: ignore
-
-        if not accumulate_gradients and il_cfg.use_linear_lr_decay:
-            self.lr_scheduler.step()  # type: ignore
 
         self.rollouts.after_update(rnn_hidden_states)
         self.pth_time += time.time() - t_update_model
@@ -332,7 +335,6 @@ class ILEnvDDPTrainer(PPOTrainer):
             action_loss,
             dist_entropy,
             actual_action_loss,
-            accum_loss,
         )
 
     @profiling_wrapper.RangeContext("train")
@@ -461,8 +463,15 @@ class ILEnvDDPTrainer(PPOTrainer):
                     action_loss,
                     dist_entropy,
                     actual_action_loss,
-                    total_accumulated_loss,
                 ) = self._update_agent()
+
+                # With gradient accumulation, the weights may not have actually been
+                # updated this step. However, it still needs to be counted as a step
+                # e.g. for logging and checkpointing purposes.
+                self.num_updates_done += 1
+
+                if il_cfg.use_linear_lr_decay:
+                    self.lr_scheduler.step()
 
                 self.num_updates_done += 1
                 losses = self._coalesce_post_step(
@@ -470,7 +479,6 @@ class ILEnvDDPTrainer(PPOTrainer):
                         action_loss=action_loss,
                         entropy=dist_entropy,
                         actual_action_loss=actual_action_loss,
-                        total_accumulated_loss=total_accumulated_loss,
                     ),
                     count_steps_delta,
                 )
@@ -591,7 +599,7 @@ class ILEnvDDPTrainer(PPOTrainer):
 
         config.defrost()
         config.TASK_CONFIG.DATASET.SPLIT = config.EVAL.SPLIT
-        config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v2"
+        config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
         config.freeze()
 
         if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
@@ -762,11 +770,16 @@ class ILEnvDDPTrainer(PPOTrainer):
                     ] = episode_stats
 
                     if len(self.config.VIDEO_OPTION) > 0:
+                        ep_id = (
+                            f"{current_episodes[i].scene_id.replace('/','_')}_"
+                            f"{current_episodes[i].episode_id}_"
+                            f"{current_episodes[i].object_category}"
+                        )
                         generate_video(
                             video_option=self.config.VIDEO_OPTION,
                             video_dir=self.config.VIDEO_DIR,
                             images=rgb_frames[i],
-                            episode_id=current_episodes[i].episode_id,
+                            episode_id=ep_id,
                             checkpoint_idx=checkpoint_index,
                             metrics=self._extract_scalars_from_info(infos[i]),
                             fps=self.config.VIDEO_FPS,

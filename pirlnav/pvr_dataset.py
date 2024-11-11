@@ -1,3 +1,4 @@
+import json
 import torch
 import zarr
 import numpy as np
@@ -44,12 +45,55 @@ class DictDataset(Dataset):
         return {k: v[idx] for k, v in self._array_dict.items()}
 
 
+def split_dataset(dataset, ep_index, num_splits):
+
+    # Split the IterableDataset into num_splits new, disjoint IterableDatasets. Need to
+    # ensure that episodes do not cross splits.
+    target_split_length = len(dataset) // num_splits
+
+    # Find the indices of the last episode in each split:
+    for split in range(num_splits):
+        # Start at the end of the split and move forward until we reach the end of an
+        # episode:
+        idx = target_split_length * (split + 1)
+        while not dataset[idx]["episode_id"] == dataset[idx + 1]["episode_id"]:
+            idx += 1
+
+
+def create_pvr_dataset_splits(
+    pvr_dataset_path,
+    nv_dataset_path,
+    num_splits=1,
+    pvr_keys=None,
+    nv_keys=None,
+):
+
+    with open(f"{pvr_dataset_path}/ep_index.json") as f:
+        ep_index = json.load(f)
+
+    dataset = get_pvr_dataset(pvr_dataset_path, nv_dataset_path, pvr_keys, nv_keys)
+    print(ep_index[:10])
+
+    for i, x in zip(range(1000), dataset):
+        print(f"step {i}")
+        print(f"done {x['done']}")
+        print(f"objectgoal {x['objectgoal']}")
+        print(f"reward {x['reward']}")
+        print(f"compass {x['compass']}")
+        print(f"gps {x['gps']}")
+        print(f"mean_pvr {x['last_two_hidden_layers'].mean()}")
+
+        print()
+        
+
+
 def get_pvr_dataset(
     pvr_dataset_path,
     nv_dataset_path,
     pvr_keys=None,
     nv_keys=None,
-    in_memory=False,
+    start_idx=None,
+    end_idx=None,
 ):
     pvr_dataset = zarr.open(pvr_dataset_path, mode="r")
     nv_dataset = zarr.open(nv_dataset_path, mode="r")
@@ -57,15 +101,13 @@ def get_pvr_dataset(
     pvr_keys = list(pvr_dataset["data"].keys()) if pvr_keys is None else pvr_keys
     nv_keys = list(nv_dataset["data"].keys()) if nv_keys is None else nv_keys
 
-    # If loading into memory, convert to numpy arrays:
-    f = np.array if in_memory else lambda x: x
-    pvr_arrays = {k: f(v) for k, v in pvr_dataset["data"].items() if k in pvr_keys}
-    nv_arrays = {k: f(v) for k, v in nv_dataset["data"].items() if k in nv_keys}
+    pvr_arrays = {k: v for k, v in pvr_dataset["data"].items() if k in pvr_keys}
+    nv_arrays = {k: v for k, v in nv_dataset["data"].items() if k in nv_keys}
 
     arrays = {**pvr_arrays, **nv_arrays}
 
-    dataset_cls = DictDataset if in_memory else ZarrDataset
-    return dataset_cls(arrays)
+    dataset = ZarrDataset(arrays, start=start_idx, end=end_idx)
+    return dataset
 
 
 if __name__ == "__main__":
@@ -74,7 +116,6 @@ if __name__ == "__main__":
         "pvr_data/one_percent/non_visual_data",
         pvr_keys=["last_two_hidden_layers"],
         nv_keys=None,
-        in_memory=False,
     )
 
     dataloader = DataLoader(dataset, batch_size=8)

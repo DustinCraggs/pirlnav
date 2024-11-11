@@ -80,9 +80,9 @@ SUB_SPLIT_GENERATOR:
 REPRESENTATION_GENERATOR:
   data_generator:
     name: clip
-    # kwargs:
-    #   model_path: "/data/drive2/models/clip-vit-base-patch32"
-    #   use_float16: True
+    clip_kwargs:
+      model_path: "/data/drive2/models/clip-vit-base-patch32"
+      use_float16: True
 
   # data_generator:
   #   name: non_visual
