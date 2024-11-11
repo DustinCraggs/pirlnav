@@ -119,7 +119,8 @@ class RepresentationGenerator:
 
         observations = self.envs.reset()
         rewards = [0.0] * self._num_envs
-        dones = [False] * self._num_envs
+        # Done is true on the first step of each episode (weird convention):
+        dones = [True] * self._num_envs
 
         step_data = self._data_generator.generate(observations, rewards, dones, None)
         for ep, data in zip(rollout_data, step_data):
@@ -140,7 +141,8 @@ class RepresentationGenerator:
             #     scene, ep = current_ep.scene_id, current_ep.episode_id
             #     scene = scene.replace("/", "_")
             #     os.makedirs(f"imgs/one_pc/scene_{scene}/ep_{ep}", exist_ok=True)
-            #     img.save(f"imgs/one_pc/scene_{scene}/ep_{ep}/step_{self._c}.png")
+            #     print(f"SAVING imgs/one_pc/scene_{scene}/ep_{ep}/step_{self._c}_done_{dones[i]}.png")
+            #     img.save(f"imgs/one_pc/scene_{scene}/ep_{ep}/step_{self._c}_done_{dones[i]}.png")
             # self._c += 1
 
             step_data = self._data_generator.generate(
