@@ -108,7 +108,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         obs_space["objectgoal"] = spaces.Box(
             low=0,
-            high=num_goals,
+            high=num_goals - 1,
             shape=(1,),
             dtype=np.int64,
         )
@@ -120,12 +120,16 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             dtype=np.float32,
         )
 
-        obs_space["inflection_weight"] = spaces.Box(
-            low=np.finfo(np.float32).min,
-            high=np.finfo(np.float32).max,
-            shape=(1,),
-            dtype=np.float32,
-        )
+        # Not sure why these are set as discrete:
+        obs_space["inflection_weight"] = spaces.Discrete(1)
+        obs_space["next_actions"] = spaces.Discrete(1)
+        # obs_space["prev_actions"] = spaces.Discrete(1)
+        # obs_space["inflection_weight"] = spaces.Box(
+        #     low=np.finfo(np.float32).min,
+        #     high=np.finfo(np.float32).max,
+        #     shape=(1,),
+        #     dtype=np.float32,
+        # )
 
         obs_space["compass"] = spaces.Box(
             low=-np.pi,
@@ -146,35 +150,32 @@ class PVRILEnvDDPTrainer(PPOTrainer):
     def _init_demonstration_dataset(self):
         pvr_config = self.config.TASK_CONFIG.PVR
 
-        pvr_dataset = create_pvr_dataset_splits(
+        pvr_datasets = create_pvr_dataset_splits(
             pvr_config.pvr_data_path,
             pvr_config.non_visual_obs_data_path,
-            num_splits=10,
+            num_splits=self.config.NUM_ENVIRONMENTS,
             pvr_keys=pvr_config.pvr_keys,
             nv_keys=pvr_config.non_visual_keys,
-        )
-        exit()
-        pvr_dataset = get_pvr_dataset(
-            pvr_config.pvr_data_path,
-            pvr_config.non_visual_obs_data_path,
-            pvr_keys=pvr_config.pvr_keys,
-            nv_keys=pvr_config.non_visual_keys,
-            in_memory=False,
         )
         # TODO: This is assuming a single "environment". Thus, we need only num_steps
         # to fill the RolloutStorage. In future, we will create a separate stream from
         # the dataset for each "environment".
         # TODO: We need to shuffle the dataset in advance (and store on disk).
         batch_size = self.config.IL.BehaviorCloning.num_steps
-        self._pvr_dataloader = DataLoader(
-            pvr_dataset,
-            batch_size=batch_size,
-            num_workers=1,
-            prefetch_factor=10,
-        )
-        self._pvr_dataloader_iter = iter(self._pvr_dataloader)
+        self._pvr_dataloaders = [
+            DataLoader(
+                pvr_dataset,
+                batch_size=batch_size,
+                num_workers=1,
+                prefetch_factor=5,
+            )
+            for pvr_dataset in pvr_datasets
+        ]
+        self._pvr_dataloader_iters = [
+            iter(self._pvr_dataloader) for self._pvr_dataloader in self._pvr_dataloaders
+        ]
 
-        example_batch = next(iter(self._pvr_dataloader))
+        example_batch = next(iter(self._pvr_dataloaders[0]))
         pvr_shapes = {k: example_batch[k].shape for k in pvr_config.pvr_keys}
 
         nv_dataset = zarr.open(pvr_config.non_visual_obs_data_path, mode="r")
@@ -186,14 +187,20 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         """
         This replaces _collect_environment_result, as the environments are not required
         when using the PVR demonstration dataset.
-
-        TODO: Currently requires single-buffer RolloutStorage and num_envs=1.
         """
-        try:
-            batch = next(self._pvr_dataloader_iter)
-        except StopIteration:
-            self._pvr_dataloader_iter = iter(self._pvr_dataloader)
-            batch = next(self._pvr_dataloader_iter)
+        samples = []
+        for i in range(self.config.NUM_ENVIRONMENTS):
+            try:
+                samples.append(next(self._pvr_dataloader_iters[i]))
+            except StopIteration:
+                self._pvr_dataloader_iters[i] = iter(self._pvr_dataloaders[i])
+                samples.append(next(self._pvr_dataloader_iters[i]))
+
+        batch_keys = samples[0].keys()
+        batch = {
+            k: torch.stack([s[k] for s in samples], dim=0)
+            for k in batch_keys
+        }
 
         # TODO: The observations from the dataset are already batched, but would using
         # the cache still meaningfully impact performance?
@@ -204,25 +211,26 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         dones = batch["done"].to(self.device)
 
         # TODO: Need to feed actions and observations to the RolloutStorage even though
-        # they're already batched (will replace RolloutStorage with a dataset next):
-        num_steps = min(self.config.IL.BehaviorCloning.num_steps, len(actions))
+        # they're already batched (could replace RolloutStorage with a dataset next):
+        # num_steps = min(self.config.IL.BehaviorCloning.num_steps, len(actions))
+        num_steps = self.config.IL.BehaviorCloning.num_steps
 
         for step in range(num_steps):
             # Providing last action here (standard IL trainer does this on the next
             # iteration):
-            this_step_obs = {k: v[step] for k, v in observations.items()}
+            this_step_obs = {k: v[:, step] for k, v in observations.items()}
 
             self.rollouts.insert(
                 next_observations=this_step_obs,
-                actions=actions[step],
-                rewards=rewards[step],
-                next_masks=~dones[step],
+                actions=actions[:, step].reshape(-1, 1),
+                rewards=rewards[:, step].reshape(-1, 1),
+                next_masks=~dones[:, step].reshape(-1, 1),
                 buffer_index=0,
             )
             self.rollouts.advance_rollout(0)
 
         # Return number of steps collected
-        return num_steps
+        return num_steps * self.config.NUM_ENVIRONMENTS
 
     def _setup_actor_critic_agent(self, il_cfg: Config) -> None:
         r"""Sets up actor critic and agent for IL.
@@ -413,51 +421,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         self.env_time = 0.0
         self.pth_time = 0.0
         self.t_start = time.time()
-
-    def _compute_actions_and_step_envs(self, buffer_index: int = 0):
-        num_envs = self.envs.num_envs
-        env_slice = slice(
-            int(buffer_index * num_envs / self._nbuffers),
-            int((buffer_index + 1) * num_envs / self._nbuffers),
-        )
-
-        t_sample_action = time.time()
-
-        # fetch actions from replay buffer
-        step_batch = self.rollouts.buffers[
-            self.rollouts.current_rollout_step_idxs[buffer_index],
-            env_slice,
-        ]
-        next_actions = step_batch["observations"]["next_actions"]
-        actions = next_actions.long().unsqueeze(-1)
-
-        # NB: Move actions to CPU.  If CUDA tensors are
-        # sent in to env.step(), that will create CUDA contexts
-        # in the subprocesses.
-        # For backwards compatibility, we also call .item() to convert to
-        # an int
-        actions = actions.to(device="cpu")
-        self.pth_time += time.time() - t_sample_action
-
-        profiling_wrapper.range_pop()  # compute actions
-
-        t_step_env = time.time()
-
-        for index_env, act in zip(
-            range(env_slice.start, env_slice.stop), actions.unbind(0)
-        ):
-            if act.shape[0] > 1:
-                step_action = action_array_to_dict(self.policy_action_space, act)
-            else:
-                step_action = act.item()
-            self.envs.async_step_at(index_env, step_action)
-
-        self.env_time += time.time() - t_step_env
-
-        self.rollouts.insert(
-            actions=actions,
-            buffer_index=buffer_index,
-        )
 
     @profiling_wrapper.RangeContext("_update_agent")
     def _update_agent(self):

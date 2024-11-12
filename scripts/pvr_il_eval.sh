@@ -40,3 +40,4 @@ python -u -m run \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path "/data/drive2/models/clip-vit-base-patch32" \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.use_float16 True \
     POLICY.PVR_ENCODER.num_heads 4
+    # POLICY.RGB_ENCODER.augmentations_name "" \

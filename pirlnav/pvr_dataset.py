@@ -1,6 +1,8 @@
+from bisect import bisect_left
 import json
 import torch
 import zarr
+import itertools
 import numpy as np
 
 from habitat.core.registry import registry
@@ -13,11 +15,12 @@ class ZarrDataset(IterableDataset):
     dataset into memory, and b) prevents random access, which is apparently slow
     for zarr."""
 
-    def __init__(self, zarr_array_dict, start=None, end=None):
+    def __init__(self, zarr_array_dict, start=None, end=None, cycle=True):
         self._zarr_array_dict = zarr_array_dict
         total_length = zarr_array_dict[next(iter(zarr_array_dict))].shape[0]
         self._start = start or 0
         self._end = end or total_length
+        self._cycle = cycle
 
     def __len__(self):
         return self._end - self._start
@@ -27,8 +30,13 @@ class ZarrDataset(IterableDataset):
             k: v.islice(self._start, self._end)
             for k, v in self._zarr_array_dict.items()
         }
-        for _ in range(len(self)):
-            yield {k: next(v) for k, v in generators.items()}
+        if self._cycle:
+            generators = {k: itertools.cycle(v) for k, v in generators.items()}
+            while True:
+                yield {k: next(v) for k, v in generators.items()}
+        else:
+            for _ in range(len(self)):
+                yield {k: next(v) for k, v in generators.items()}
 
 
 class DictDataset(Dataset):
@@ -45,19 +53,14 @@ class DictDataset(Dataset):
         return {k: v[idx] for k, v in self._array_dict.items()}
 
 
-def split_dataset(dataset, ep_index, num_splits):
+# class BatchedIterableDataset(IterableDataset):
+#     """Iterates over multiple IterableDatasets in parallel, yielding batches of one
+#     element from each dataset."""
 
-    # Split the IterableDataset into num_splits new, disjoint IterableDatasets. Need to
-    # ensure that episodes do not cross splits.
-    target_split_length = len(dataset) // num_splits
+#     def __init__(self, datasets):
+#         self._datasets = datasets
 
-    # Find the indices of the last episode in each split:
-    for split in range(num_splits):
-        # Start at the end of the split and move forward until we reach the end of an
-        # episode:
-        idx = target_split_length * (split + 1)
-        while not dataset[idx]["episode_id"] == dataset[idx + 1]["episode_id"]:
-            idx += 1
+#     def __iter__(self):
 
 
 def create_pvr_dataset_splits(
@@ -67,14 +70,55 @@ def create_pvr_dataset_splits(
     pvr_keys=None,
     nv_keys=None,
 ):
-
+    # This is probably overcomplicated given that the number of steps would be pretty
+    # similar even if splitting by episode.
     with open(f"{pvr_dataset_path}/ep_index.json") as f:
         ep_index = json.load(f)
 
     dataset = get_pvr_dataset(pvr_dataset_path, nv_dataset_path, pvr_keys, nv_keys)
-    print(ep_index[:10])
 
-    for i, x in zip(range(1000), dataset):
+    # Need to divide dataset into episodes (i.e. episodes should not be broken across
+    # multiple splits):
+    ep_boundaries = [*[ep_info["row"] for ep_info in ep_index], len(dataset)]
+    target_split_length = len(dataset) // num_splits
+    target_end_rows = [target_split_length * (i + 1) for i in range(num_splits)]
+
+    end_rows = [
+        ep_boundaries[bisect_left(ep_boundaries, target)] for target in target_end_rows
+    ]
+
+    datasets = []
+    start_row = 0
+
+    for end_row in end_rows:
+        dataset = get_pvr_dataset(
+            pvr_dataset_path,
+            nv_dataset_path,
+            pvr_keys,
+            nv_keys,
+            start_idx=start_row,
+            end_idx=end_row,
+        )
+        datasets.append(dataset)
+        start_row = end_row
+
+    return datasets
+
+
+def print_dataset_head(
+    pvr_dataset_path,
+    nv_dataset_path,
+    num_splits=1,
+    pvr_keys=None,
+    nv_keys=None,
+):
+    with open(f"{pvr_dataset_path}/ep_index.json") as f:
+        ep_index = json.load(f)
+
+    dataset = get_pvr_dataset(pvr_dataset_path, nv_dataset_path, pvr_keys, nv_keys)
+    print(ep_index[:50])
+
+    for i, x in zip(range(3000), dataset):
         print(f"step {i}")
         print(f"done {x['done']}")
         print(f"objectgoal {x['objectgoal']}")
@@ -84,7 +128,6 @@ def create_pvr_dataset_splits(
         print(f"mean_pvr {x['last_two_hidden_layers'].mean()}")
 
         print()
-        
 
 
 def get_pvr_dataset(
