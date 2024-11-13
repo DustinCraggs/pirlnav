@@ -58,6 +58,7 @@ def generate_dataset_split_json(config: Config, output_path, stride) -> None:
         scenes = dataset.get_scenes_to_load(dataset_config)
 
     episodes = dataset.episodes
+    print(f"Total number of episodes before: {len(episodes)}")
     num_unique_pairs_before = get_num_unique(episodes)
     episodes.sort(key=lambda ep: (ep.scene_id, ep.object_category))
     episodes = episodes[::stride]

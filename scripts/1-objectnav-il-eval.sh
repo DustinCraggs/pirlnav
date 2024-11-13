@@ -27,7 +27,7 @@ export HABITAT_SIM_LOG=quiet
 config="configs/experiments/il_objectnav.yaml"
 
 # DATA_PATH="../data/habitat/demos/data/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd/"
-DATA_PATH="data/demos/objectnav_hm3d_v1/"
+DATA_PATH="data/tasks/objectnav_hm3d_v1/"
 # DATA_PATH="data/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd/"
 # TENSORBOARD_DIR="../data/habitat/tb/objectnav_il/test/"
 TENSORBOARD_DIR="data/habitat/tb/objectnav_il/test/"

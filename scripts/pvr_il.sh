@@ -8,9 +8,10 @@ config="configs/experiments/il_objectnav.yaml"
 
 
 DATA_DIR=$1
-EXP_NAME=$2
+PVR_DIR=$2
+EXP_NAME=$3
 
-DATA_PATH="$DATA_DIR/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
+DATA_PATH="$DATA_DIR/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 TENSORBOARD_DIR="$DATA_DIR/tb/objectnav_il/$EXP_NAME/"
 CHECKPOINT_DIR="$DATA_DIR/checkpoints/objectnav_il/$EXP_NAME/"
 INFLECTION_COEF=3.234951275740812
@@ -20,14 +21,11 @@ mkdir -p $CHECKPOINT_DIR
 set -x
 
 echo "In ObjectNav IL DDP"
-# python -u -m torch.distributed.launch \
-#     --use_env \
-#     --nproc_per_node 1 \
-#     --master_port 29501 \
-#     --rdzv_endpoint localhost:29502 \
-#     --nnodes 1 \
-#     run.py \
-python -u -m run \
+# python -u -m run \
+python -u -m torch.distributed.launch \
+    --use_env \
+    --nproc_per_node 1 \
+    run.py \
     --exp-config $config \
     --run-type train \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
@@ -49,7 +47,5 @@ python -u -m run \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
-    TASK_CONFIG.PVR.pvr_data_path "$DATA_DIR/pvr_demos/ten_percent/clip_data" \
-    TASK_CONFIG.PVR.non_visual_obs_data_path "$DATA_DIR/pvr_demos/ten_percent/non_visual_data"
-
-    # IL.BehaviorCloning.num_steps 1024 \
+    TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/pvr_demos/ten_percent/clip_data" \
+    TASK_CONFIG.PVR.non_visual_obs_data_path "$PVR_DIR/pvr_demos/ten_percent/non_visual_data"

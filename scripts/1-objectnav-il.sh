@@ -13,7 +13,7 @@ config="configs/experiments/il_objectnav.yaml"
 DATA_DIR=$1
 EXP_NAME=$2
 
-DATA_PATH="$1/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
+DATA_PATH="$1/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 TENSORBOARD_DIR="$1/tb/objectnav_il/$2/"
 CHECKPOINT_DIR="$1/checkpoints/objectnav_il/$2/"
 INFLECTION_COEF=3.234951275740812

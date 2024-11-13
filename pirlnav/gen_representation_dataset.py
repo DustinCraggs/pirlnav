@@ -26,6 +26,10 @@ def generate_episode_split_index(config):
 class RepresentationGenerator:
 
     def __init__(self, config):
+        print(
+            "WARNING: If using a different NUM_ENVIRONMENTS when generating different "
+            "datasets, the order of the episodes will be different."
+        )
         self._init_envs(config)
         generator_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
 
@@ -56,7 +60,9 @@ class RepresentationGenerator:
         with open(sub_split_index_path, "r") as f:
             sub_split_index = json.load(f)
 
-        self._remaining_ep_set = set(set([tuple(ep.values()) for ep in sub_split_index]))
+        self._remaining_ep_set = set(
+            set([tuple(ep.values()) for ep in sub_split_index])
+        )
         self._completed_eps = []
 
         self.envs = construct_envs(
@@ -100,12 +106,14 @@ class RepresentationGenerator:
                 print(f"{name}: {data_array.shape}")
                 self._data_group[name].append(data_array)
         # Update the completed episode index:
-        self._completed_eps.append({
-            "scene_id": ep_id[0],
-            "episode_id": ep_id[1],
-            "object_category": ep_id[2],
-            "row": row,
-        })
+        self._completed_eps.append(
+            {
+                "scene_id": ep_id[0],
+                "episode_id": ep_id[1],
+                "object_category": ep_id[2],
+                "row": row,
+            }
+        )
         # Save the episode index in case of early termination:
         json.dump(self._completed_eps, open(self._ep_index_path, "w"))
 
