@@ -8,8 +8,7 @@ DATA_DIR=$1
 EVAL_CHECKPOINT_DIR=$2
 EXP_NAME=$3
 
-# DATA_PATH="$DATA_DIR/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
-DATA_PATH="$DATA_DIR/demos/objectnav_hm3d_v1/"
+DATA_PATH="$DATA_DIR/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 
 set -x
 
@@ -26,8 +25,8 @@ python -u -m run \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \
     NUM_ENVIRONMENTS 20 \
-    EVAL.SPLIT "val" \
-    TASK_CONFIG.DATASET.TYPE "ObjectNav-v1" \
+    EVAL.SPLIT "train" \
+    TASK_CONFIG.DATASET.TYPE "ObjectNav-v2" \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.PVR.pvr_data_path "data/pvr_demos/one_percent/clip_data" \
     TASK_CONFIG.PVR.non_visual_obs_data_path "data/pvr_demos/one_percent/non_visual_data" \
@@ -35,6 +34,4 @@ python -u -m run \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path "/data/drive2/models/clip-vit-base-patch32" \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.use_float16 True \
     POLICY.PVR_ENCODER.num_heads 4 \
-    # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "$DATA_DIR/pvr_demos/ten_percent/ep_index.json" \
-
-    # POLICY.RGB_ENCODER.augmentations_name "" \
+    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "$DATA_DIR/pvr_demos/ten_percent/ep_index.json" \

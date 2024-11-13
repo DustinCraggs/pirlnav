@@ -2,10 +2,7 @@ export GLOG_minloglevel=2
 export MAGNUM_LOG=quiet
 export HABITAT_SIM_LOG=quiet
 
-# dataset=$1
-
 config="configs/experiments/il_objectnav.yaml"
-
 
 DATA_DIR=$1
 PVR_DIR=$2
@@ -22,8 +19,11 @@ set -x
 
 echo "In ObjectNav IL DDP"
 # python -u -m run \
-python -u -m torch.distributed.launch \
-    --use_env \
+    # --use_env \
+# --master_port 29501 \
+# --rdzv_endpoint localhost:29502 \
+# --nnodes 1 \
+python -u -m torch.distributed.run \
     --nproc_per_node 1 \
     run.py \
     --exp-config $config \
@@ -35,8 +35,8 @@ python -u -m torch.distributed.launch \
     NUM_UPDATES 391000 \
     NUM_ENVIRONMENTS 32 \
     IL.BehaviorCloning.wd 1e-6 \
-    IL.BehaviorCloning.num_steps 32 \
-    IL.BehaviorCloning.num_mini_batch 1 \
+    IL.BehaviorCloning.num_steps 64 \
+    IL.BehaviorCloning.num_mini_batch 2 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     IL.BehaviorCloning.num_accumulated_gradient_steps 32 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
