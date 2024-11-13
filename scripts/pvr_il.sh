@@ -2,10 +2,7 @@ export GLOG_minloglevel=2
 export MAGNUM_LOG=quiet
 export HABITAT_SIM_LOG=quiet
 
-# dataset=$1
-
 config="configs/experiments/il_objectnav.yaml"
-
 
 DATA_DIR=$1
 EXP_NAME=$2
@@ -20,14 +17,14 @@ mkdir -p $CHECKPOINT_DIR
 set -x
 
 echo "In ObjectNav IL DDP"
-# python -u -m torch.distributed.launch \
-#     --use_env \
-#     --nproc_per_node 1 \
-#     --master_port 29501 \
-#     --rdzv_endpoint localhost:29502 \
-#     --nnodes 1 \
-#     run.py \
-python -u -m run \
+# python -u -m run \
+    # --use_env \
+python -u -m torch.distributed.run \
+    --nproc_per_node 1 \
+    --master_port 29501 \
+    --rdzv_endpoint localhost:29502 \
+    --nnodes 1 \
+    run.py \
     --exp-config $config \
     --run-type train \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
@@ -37,8 +34,8 @@ python -u -m run \
     NUM_UPDATES 391000 \
     NUM_ENVIRONMENTS 32 \
     IL.BehaviorCloning.wd 1e-6 \
-    IL.BehaviorCloning.num_steps 32 \
-    IL.BehaviorCloning.num_mini_batch 1 \
+    IL.BehaviorCloning.num_steps 64 \
+    IL.BehaviorCloning.num_mini_batch 2 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     IL.BehaviorCloning.num_accumulated_gradient_steps 32 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \

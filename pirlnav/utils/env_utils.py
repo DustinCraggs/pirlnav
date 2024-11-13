@@ -118,10 +118,7 @@ def construct_envs(
     env_classes = [env_class for _ in range(num_environments)]
 
     dataset_config = config.TASK_CONFIG.DATASET
-    # if episode_index is not None:
-    #     # Load the episodes so that we can filter them according to the index:
-    #     dataset = make_dataset(config.TASK_CONFIG.DATASET.TYPE, config=dataset_config)
-    # else:
+    
     dataset = make_dataset(config.TASK_CONFIG.DATASET.TYPE)
     scenes = dataset_config.CONTENT_SCENES
     if "*" in dataset_config.CONTENT_SCENES:
@@ -152,11 +149,6 @@ def construct_envs(
         for idx, scene in enumerate(scenes):
             scene_splits[idx % len(scene_splits)].append(scene)
         assert sum(map(len, scene_splits)) == len(scenes)
-
-    # env_episodes = [None for _ in range(num_environments)]
-    # if episode_index is not None:
-    #     episodes = filter_episodes(dataset.episodes, episode_index)
-    #     env_episodes = [episodes for _ in range(num_environments)]
 
     for i in range(num_environments):
         proc_config = config.clone()

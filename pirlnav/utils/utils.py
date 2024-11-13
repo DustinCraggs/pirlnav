@@ -3,6 +3,7 @@ import gzip
 import json
 import os
 from collections import defaultdict
+import time
 from typing import DefaultDict, Dict, List, Optional, Union
 
 import numpy as np
@@ -20,13 +21,35 @@ from torch import Tensor
 from pirlnav.policy.models.resnet_gn import ResNet
 
 
+class SimpleProfiler:
+    def __init__(self):
+        self._entry_times = {}
+        self._total_times = defaultdict(float)
+        self._counts = defaultdict(int)
+
+    def reset(self):
+        self._entry_times.clear()
+        self._total_times.clear()
+        self._counts.clear()
+
+    def enter(self, key):
+        self._entry_times[key] = time.time()
+
+    def exit(self, key):
+        self._total_times[key] += time.time() - self._entry_times[key]
+        # Only increment count on exit so that stats will be more correct if accessed
+        # before all keys have exited:
+        self._counts[key] += 1
+
+    def get_stats(self):
+        return {k: v / self._counts[k] for k, v in self._total_times.items()}
+
+
 def load_encoder(encoder, path):
     assert os.path.exists(path)
     if isinstance(encoder.backbone, ResNet):
         state_dict = torch.load(path, map_location="cpu")["teacher"]
-        state_dict = {
-            k.replace("module.", ""): v for k, v in state_dict.items()
-        }
+        state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
         return encoder.load_state_dict(state_dict=state_dict, strict=False)
     else:
         raise ValueError("unknown encoder backbone")
@@ -71,9 +94,7 @@ def observations_to_image(observation: Dict, info: Dict) -> np.ndarray:
 
         render_obs_images.append(rgb)
 
-    assert (
-        len(render_obs_images) > 0
-    ), "Expected at least one visual sensor enabled."
+    assert len(render_obs_images) > 0, "Expected at least one visual sensor enabled."
 
     # shapes_are_equal = len(set(x.shape for x in render_obs_images)) == 1
     # if not shapes_are_equal:
@@ -126,9 +147,7 @@ def generate_video(
     for k, v in metrics.items():
         metric_strs.append(f"{k}={v:.2f}")
 
-    video_name = f"episode={episode_id}-ckpt={checkpoint_idx}-" + "-".join(
-        metric_strs
-    )
+    video_name = f"episode={episode_id}-ckpt={checkpoint_idx}-" + "-".join(metric_strs)
     if "disk" in video_option:
         assert video_dir is not None
         images_to_video(images, video_dir, video_name, verbose=verbose)

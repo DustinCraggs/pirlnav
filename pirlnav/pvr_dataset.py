@@ -15,28 +15,33 @@ class ZarrDataset(IterableDataset):
     dataset into memory, and b) prevents random access, which is apparently slow
     for zarr."""
 
-    def __init__(self, zarr_array_dict, start=None, end=None, cycle=True):
+    def __init__(self, zarr_array_dict, start=None, end=None, auto_reset=True):
         self._zarr_array_dict = zarr_array_dict
         total_length = zarr_array_dict[next(iter(zarr_array_dict))].shape[0]
         self._start = start or 0
         self._end = end or total_length
-        self._cycle = cycle
+        self._auto_reset = auto_reset
 
     def __len__(self):
         return self._end - self._start
 
     def __iter__(self):
-        generators = {
+        generators = self._get_generators()
+
+        while True:
+            try:
+                yield {k: next(v) for k, v in generators.items()}
+            except StopIteration:
+                if self._auto_reset:
+                    generators = self._get_generators()
+                else:
+                    raise
+
+    def _get_generators(self):
+        return {
             k: v.islice(self._start, self._end)
             for k, v in self._zarr_array_dict.items()
         }
-        if self._cycle:
-            generators = {k: itertools.cycle(v) for k, v in generators.items()}
-            while True:
-                yield {k: next(v) for k, v in generators.items()}
-        else:
-            for _ in range(len(self)):
-                yield {k: next(v) for k, v in generators.items()}
 
 
 class DictDataset(Dataset):
@@ -53,14 +58,27 @@ class DictDataset(Dataset):
         return {k: v[idx] for k, v in self._array_dict.items()}
 
 
-# class BatchedIterableDataset(IterableDataset):
-#     """Iterates over multiple IterableDatasets in parallel, yielding batches of one
-#     element from each dataset."""
+class BatchedCyclicIterableDataset(IterableDataset):
+    """Iterates over multiple IterableDatasets in parallel, yielding batches containing
+    one sample from each dataset."""
 
-#     def __init__(self, datasets):
-#         self._datasets = datasets
+    def __init__(self, datasets):
+        self._datasets = datasets
 
-#     def __iter__(self):
+    def __len__(self):
+        return min(len(dataset) for dataset in self._datasets)
+
+    def __iter__(self):
+        iterators = [iter(dataset) for dataset in self._datasets]
+        batch = []
+        while True:
+            for i, iterator in enumerate(iterators):
+                try:
+                    batch.append(next(iterator))
+                except StopIteration:
+                    iterators[i] = iter(self._datasets[i])
+                    batch.append(next(iterator))
+            yield {k: torch.stack([x[k] for x in batch]) for k in batch[0]}
 
 
 def create_pvr_dataset_splits(
@@ -89,8 +107,9 @@ def create_pvr_dataset_splits(
 
     datasets = []
     start_row = 0
-
+    print(f"Total length: {len(dataset)}")
     for end_row in end_rows:
+        print(f"start_row {start_row}, end_row {end_row}")
         dataset = get_pvr_dataset(
             pvr_dataset_path,
             nv_dataset_path,

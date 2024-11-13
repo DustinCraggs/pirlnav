@@ -5,10 +5,12 @@
 # LICENSE file in the root directory of this source tree.
 
 import contextlib
+import json
 import os
 import random
 import time
 from habitat.core.spaces import ActionSpace, EmptySpace
+from habitat.core.vector_env import CURRENT_EPISODE_NAME
 import zarr
 
 from collections import defaultdict, deque
@@ -60,6 +62,7 @@ from pirlnav.common.rollout_storage import RolloutStorage
 from pirlnav.gen_representation_dataset import ClipGenerator
 from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_pvr_dataset
 from pirlnav.utils.env_utils import construct_envs
+from pirlnav.utils.utils import SimpleProfiler
 
 
 # TODO:
@@ -109,6 +112,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         obs_space["objectgoal"] = spaces.Box(
             low=0,
             high=num_goals - 1,
+            # For evaluating older models:
+            # high=num_goals,
             shape=(1,),
             dtype=np.int64,
         )
@@ -162,20 +167,20 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         # the dataset for each "environment".
         # TODO: We need to shuffle the dataset in advance (and store on disk).
         batch_size = self.config.IL.BehaviorCloning.num_steps
-        self._pvr_dataloaders = [
+        pvr_dataloaders = [
             DataLoader(
                 pvr_dataset,
                 batch_size=batch_size,
                 num_workers=1,
-                prefetch_factor=5,
+                prefetch_factor=3,
             )
             for pvr_dataset in pvr_datasets
         ]
         self._pvr_dataloader_iters = [
-            iter(self._pvr_dataloader) for self._pvr_dataloader in self._pvr_dataloaders
+            iter(self._pvr_dataloader) for self._pvr_dataloader in pvr_dataloaders
         ]
 
-        example_batch = next(iter(self._pvr_dataloaders[0]))
+        example_batch = next(iter(pvr_dataloaders[0]))
         pvr_shapes = {k: example_batch[k].shape for k in pvr_config.pvr_keys}
 
         nv_dataset = zarr.open(pvr_config.non_visual_obs_data_path, mode="r")
@@ -190,17 +195,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         """
         samples = []
         for i in range(self.config.NUM_ENVIRONMENTS):
-            try:
-                samples.append(next(self._pvr_dataloader_iters[i]))
-            except StopIteration:
-                self._pvr_dataloader_iters[i] = iter(self._pvr_dataloaders[i])
-                samples.append(next(self._pvr_dataloader_iters[i]))
+            # The datasets automatically cycle:
+            samples.append(next(self._pvr_dataloader_iters[i]))
 
         batch_keys = samples[0].keys()
-        batch = {
-            k: torch.stack([s[k] for s in samples], dim=0)
-            for k in batch_keys
-        }
+        batch = {k: torch.stack([s[k] for s in samples], dim=0) for k in batch_keys}
 
         # TODO: The observations from the dataset are already batched, but would using
         # the cache still meaningfully impact performance?
@@ -282,11 +281,18 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         if config is None:
             config = self.config
 
+        sub_split_index_path = config["TASK_CONFIG"]["DATASET"]["SUB_SPLIT_INDEX_PATH"]
+        sub_split_index = None
+        if sub_split_index_path is not None:
+            with open(sub_split_index_path, "r") as f:
+                sub_split_index = json.load(f)
+
         self.envs = construct_envs(
             config,
             get_env_class(config.ENV_NAME),
             workers_ignore_signals=is_slurm_batch_job(),
             shuffle_scenes=shuffle_scenes,
+            episode_index=sub_split_index,
         )
 
     def _init_train(self):
@@ -671,6 +677,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         Returns:
             None
         """
+        profiler = SimpleProfiler()
         print(f"-------------- {checkpoint_path} --------------")
         # TODO: Don't need to init the whold dataset here just to get the metadata:
         self._init_demonstration_dataset()
@@ -693,7 +700,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         config.TASK_CONFIG.DATASET.SPLIT = config.EVAL.SPLIT
         # config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
         # Set to v2 when using the training dataset:
-        config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v2"
+        # config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v2"
         config.freeze()
 
         if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
@@ -797,11 +804,14 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         rewards, dones, infos = None, None, None
 
+        current_episodes = self.envs.current_episodes()
+
         pbar = tqdm.tqdm(total=number_of_eval_episodes)
         logger.info("Sampling actions deterministically...")
         self.actor_critic.eval()
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
-            current_episodes = self.envs.current_episodes()
+            profiler.enter("entire_eval_iter")
+            profiler.enter("generate_pvrs")
             # Add PVR to batch:
             pvrs = data_generator.generate(
                 observations,
@@ -815,8 +825,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             for k in config.TASK_CONFIG.PVR.pvr_keys:
                 batch[k] = pvrs[k]
 
-            # for k, v in batch.items():
-            #     print(k, v)
+            profiler.exit("generate_pvrs")
+            profiler.enter("get_actions")
 
             with torch.no_grad():
                 (
@@ -831,6 +841,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 )
 
                 prev_actions.copy_(actions)  # type: ignore
+
             # NB: Move actions to CPU.  If CUDA tensors are
             # sent in to env.step(), that will create CUDA contexts
             # in the subprocesses.
@@ -844,36 +855,54 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             else:
                 step_data = [a.item() for a in actions.to(device="cpu")]
 
+            profiler.exit("get_actions")
+            profiler.enter("step_envs")
+
             outputs = self.envs.step(step_data)
 
+            profiler.exit("step_envs")
+            profiler.enter("process_batch")
+
+            profiler.enter("outputs_to_list")
             observations, rewards_l, dones, infos = [list(x) for x in zip(*outputs)]
+            profiler.exit("outputs_to_list")
+
+            profiler.enter("batch_obs")
             batch = batch_obs(  # type: ignore
                 observations,
                 device=self.device,
                 cache=self._obs_batching_cache,
             )
-            batch = apply_obs_transforms_batch(batch, self.obs_transforms)  # type: ignore
+            profiler.exit("batch_obs")
 
+            profiler.enter("apply_obs_transforms_batch")
+            batch = apply_obs_transforms_batch(batch, self.obs_transforms)  # type: ignore
+            profiler.exit("apply_obs_transforms_batch")
+
+            profiler.enter("not_done_masks")
             not_done_masks = torch.tensor(
                 [[not done] for done in dones],
                 dtype=torch.bool,
                 device="cpu",
             )
+            profiler.exit("not_done_masks")
 
+            profiler.enter("process_rewards")
             rewards = torch.tensor(
                 rewards_l, dtype=torch.float, device="cpu"
             ).unsqueeze(1)
             current_episode_reward += rewards
-            next_episodes = self.envs.current_episodes()
+            profiler.exit("process_rewards")
+            # profiler.enter("get_current_episodes_2")
+            # next_episodes = self.envs.current_episodes(profiler)
+            # profiler.exit("get_current_episodes_2")
             envs_to_pause = []
             n_envs = self.envs.num_envs
-            for i in range(n_envs):
-                if (
-                    next_episodes[i].scene_id,
-                    next_episodes[i].episode_id,
-                ) in stats_episodes:
-                    envs_to_pause.append(i)
 
+            profiler.exit("process_batch")
+            profiler.enter("logging_and_video_generation")
+
+            for i in range(n_envs):
                 # episode ended
                 if not not_done_masks[i].item():
                     pbar.update()
@@ -888,12 +917,41 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         )
                     ] = episode_stats
 
+                    # Write intermediate stats:
+                    # TODO: Factor out
+                    num_episodes_completed = len(stats_episodes)
+                    writer.add_scalar(
+                        "performance/num_episodes_completed",
+                        num_episodes_completed,
+                        num_episodes_completed,
+                    )
+                    writer.add_scalar(
+                        "results/number_of_successful_episodes",
+                        sum(v["success"] for v in stats_episodes.values()),
+                        num_episodes_completed,
+                    )
+
+                    # Log profiling data:
+                    for k, v in profiler.get_stats().items():
+                        writer.add_scalar(f"performance/{k}", v, num_episodes_completed)
+
+                    for k in next(iter(stats_episodes.values())).keys():
+                        total = sum(v[k] for v in stats_episodes.values())
+                        writer.add_scalar(
+                            f"running_averages/{k}",
+                            total / num_episodes_completed,
+                            num_episodes_completed,
+                        )
+
                     if len(self.config.VIDEO_OPTION) > 0:
                         ep_id = (
                             f"{current_episodes[i].scene_id.replace('/','_')}_"
                             f"{current_episodes[i].episode_id}_"
                             f"{current_episodes[i].object_category}"
                         )
+
+                        profiler.enter("write_video")
+
                         generate_video(
                             video_option=self.config.VIDEO_OPTION,
                             video_dir=self.config.VIDEO_DIR,
@@ -906,10 +964,23 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                             keys_to_include_in_name=self.config.EVAL_KEYS_TO_INCLUDE_IN_NAME,
                         )
 
+                        profiler.exit("write_video")
+
                         rgb_frames[i] = []
 
+                    # Update current episodes for the done env and check if it needs to
+                    # be paused (i.e. its next episode has already been evaluated):
+                    profiler.enter("get_current_episode_at")
+                    current_episodes[i] = self.envs.call_at(i, CURRENT_EPISODE_NAME)
+                    profiler.exit("get_current_episode_at")
+                    if (
+                        current_episodes[i].scene_id,
+                        current_episodes[i].episode_id,
+                    ) in stats_episodes:
+                        envs_to_pause.append(i)
+
                 # episode continues
-                elif len(self.config.VIDEO_OPTION) > 0:
+                if len(self.config.VIDEO_OPTION) > 0:
                     # TODO move normalization / channel changing out of the policy and undo it here
                     frame = observations_to_image(
                         {k: v[i] for k, v in batch.items()}, infos[i]
@@ -918,6 +989,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         frame = overlay_frame(frame, infos[i])
 
                     rgb_frames[i].append(frame)
+
+            profiler.exit("logging_and_video_generation")
+            profiler.enter("pause_envs")
 
             not_done_masks = not_done_masks.to(device=self.device)
             (
@@ -938,6 +1012,15 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 batch,
                 rgb_frames,
             )
+            # Also drop the paused envs' current observations, as these are used by
+            # the PVR generator (easier than grabbing it from the batch, which has
+            # already been updated to reflect paused envs):
+            observations = [
+                obs for i, obs in enumerate(observations) if i not in envs_to_pause
+            ]
+
+            profiler.exit("pause_envs")
+            profiler.exit("entire_eval_iter")
 
         num_episodes = len(stats_episodes)
         aggregated_stats = {}
@@ -949,7 +1032,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         for k, v in aggregated_stats.items():
             logger.info(f"Average episode {k}: {v:.4f}")
 
-        step_id = checkpoint_index
+        # Use next num episodes as step to indicate final eval metrics:
+        step_id = num_episodes + 1
         if "extra_state" in ckpt_dict and "step" in ckpt_dict["extra_state"]:
             step_id = ckpt_dict["extra_state"]["step"]
 
