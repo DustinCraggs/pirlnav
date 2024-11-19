@@ -38,7 +38,7 @@ class ObjectNavILMAENet(Net):
         use_pvr_encoder: bool = False,
         pvr_token_dim: Optional[int] = None,
         pvr_obs_keys: Optional[list] = None,
-        disable_visual_inputs: bool = True,
+        disable_visual_inputs: bool = False,
     ):
         super().__init__()
         self.policy_config = policy_config
