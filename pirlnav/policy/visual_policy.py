@@ -57,6 +57,8 @@ class ObjectNavILMAENet(Net):
         self.use_pvr_encoder = use_pvr_encoder
         self.pvr_obs_keys = pvr_obs_keys
 
+        print(observation_space.spaces)
+
         if EpisodicGPSSensor.cls_uuid in observation_space.spaces:
             input_gps_dim = observation_space.spaces[EpisodicGPSSensor.cls_uuid].shape[
                 0
@@ -138,7 +140,7 @@ class ObjectNavILMAENet(Net):
                 p.requires_grad = False
 
         logger.info(
-            "State enc: {} - {} - {} - {}".format(
+            "State enc: rnn_input_size {} - hidden_size {} - rnn_type {} - num_recurrent_layers {}".format(
                 rnn_input_size, hidden_size, rnn_type, num_recurrent_layers
             )
         )
@@ -172,11 +174,6 @@ class ObjectNavILMAENet(Net):
         """
         N = rnn_hidden_states.size(1)
         x = []
-
-        # print(observations)
-        # print(rnn_hidden_states)
-        # print(prev_actions)
-        # print(masks)
 
         if EpisodicGPSSensor.cls_uuid in observations:
             obs_gps = observations[EpisodicGPSSensor.cls_uuid]

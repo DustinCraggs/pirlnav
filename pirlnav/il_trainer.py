@@ -5,6 +5,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import contextlib
+import json
 import os
 import random
 import time
@@ -65,10 +66,17 @@ class ILEnvDDPTrainer(PPOTrainer):
         if config is None:
             config = self.config
 
+        sub_split_index_path = config["TASK_CONFIG"]["DATASET"]["SUB_SPLIT_INDEX_PATH"]
+        sub_split_index = None
+        if sub_split_index_path is not None:
+            with open(sub_split_index_path, "r") as f:
+                sub_split_index = json.load(f)
+
         self.envs = construct_envs(
             config,
             get_env_class(config.ENV_NAME),
             workers_ignore_signals=is_slurm_batch_job(),
+            episode_index=sub_split_index,
         )
 
     def _setup_actor_critic_agent(self, il_cfg: Config) -> None:
@@ -473,7 +481,6 @@ class ILEnvDDPTrainer(PPOTrainer):
                 if il_cfg.use_linear_lr_decay:
                     self.lr_scheduler.step()
 
-                self.num_updates_done += 1
                 losses = self._coalesce_post_step(
                     dict(
                         action_loss=action_loss,

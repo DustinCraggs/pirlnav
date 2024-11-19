@@ -59,7 +59,7 @@ from torch.utils.data import DataLoader
 
 from pirlnav.algos.agent import DDPILAgent, ILAgent
 from pirlnav.common.rollout_storage import RolloutStorage
-from pirlnav.gen_representation_dataset import ClipGenerator
+from pirlnav.gen_representation_dataset import RepresentationGenerator
 from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_pvr_dataset
 from pirlnav.utils.env_utils import construct_envs
 from pirlnav.utils.utils import SimpleProfiler
@@ -118,16 +118,16 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             dtype=np.int64,
         )
 
-        obs_space["gps"] = spaces.Box(
-            low=np.finfo(np.float32).min,
-            high=np.finfo(np.float32).max,
-            shape=(2,),
-            dtype=np.float32,
-        )
+        # obs_space["gps"] = spaces.Box(
+        #     low=np.finfo(np.float32).min,
+        #     high=np.finfo(np.float32).max,
+        #     shape=(2,),
+        #     dtype=np.float32,
+        # )
 
         # Not sure why these are set as discrete:
         obs_space["inflection_weight"] = spaces.Discrete(1)
-        obs_space["next_actions"] = spaces.Discrete(1)
+        # obs_space["next_actions"] = spaces.Discrete(1)
         # obs_space["prev_actions"] = spaces.Discrete(1)
         # obs_space["inflection_weight"] = spaces.Box(
         #     low=np.finfo(np.float32).min,
@@ -136,12 +136,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         #     dtype=np.float32,
         # )
 
-        obs_space["compass"] = spaces.Box(
-            low=-np.pi,
-            high=np.pi,
-            shape=(1,),
-            dtype=np.float32,
-        )
+        # obs_space["compass"] = spaces.Box(
+        #     low=-np.pi,
+        #     high=np.pi,
+        #     shape=(1,),
+        #     dtype=np.float32,
+        # )
 
         # The first dimension of the shapes is the batch size:
         pvr_spaces = {
@@ -795,12 +795,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 number_of_eval_episodes = total_num_eps
 
         # Make representation generator:
-        generator_config = config.TASK_CONFIG.REPRESENTATION_GENERATOR
-        data_generator_name = generator_config.data_generator.name
-
-        if data_generator_name == "clip":
-            generator_kwargs = generator_config["data_generator"]["clip_kwargs"]
-            data_generator = ClipGenerator(**generator_kwargs)
+        data_generator = RepresentationGenerator.get_data_generator(config)
 
         rewards, dones, infos = None, None, None
 

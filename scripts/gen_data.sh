@@ -10,7 +10,7 @@ clip_model_path=None
 
 bc_dataset_path="$1/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd/{split}/{split}.json.gz"
 
-CUDA_VISIBLE_DEVICES=0 python run.py \
+python run.py \
     --run-type gen \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $bc_dataset_path \
@@ -18,7 +18,9 @@ CUDA_VISIBLE_DEVICES=0 python run.py \
     TASK_CONFIG.REPRESENTATION_GENERATOR.batch_chunk_size 1000 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path $clip_model_path \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/clip_data \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name vc_1 \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/vc_1_data \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/clip_data \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name non_visual \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/non_visual_data \

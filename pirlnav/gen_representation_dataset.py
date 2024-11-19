@@ -1,14 +1,20 @@
 import json
 import os
+import pickle
+import types
+import einops
+from habitat.core.vector_env import CURRENT_EPISODE_NAME
 import numpy as np
 import torch
 import zarr
 import tqdm
 
+
 from PIL import Image
 
 from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
 from habitat.core.environments import get_env_class
+from vc_models.models.vit import model_utils, vit
 
 from transformers import CLIPVisionModel, AutoProcessor
 
@@ -39,15 +45,24 @@ class RepresentationGenerator:
         self._batch_chunk_size = generator_config["batch_chunk_size"]
 
         self._zarr_file = None
+        self._data_generator = self.get_data_generator(config)
+        self._c = 0
+
+    @staticmethod
+    def get_data_generator(config):
+        generator_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
         data_generator_name = generator_config["data_generator"]["name"]
 
         if data_generator_name == "non_visual":
-            self._data_generator = NonVisualObservationsGenerator()
+            data_generator = NonVisualObservationsGenerator()
         elif data_generator_name == "clip":
-            generator_kwargs = generator_config["data_generator"].get("clip_kwargs", {})
-            self._data_generator = ClipGenerator(**generator_kwargs)
+            generator_kwargs = generator_config["data_generator"]["clip_kwargs"]
+            data_generator = ClipGenerator(**generator_kwargs)
+        elif data_generator_name == "vc_1":
+            generator_kwargs = generator_config["data_generator"]["vc_1_kwargs"]
+            data_generator = Vc1Generator(**generator_kwargs)
 
-        self._c = 0
+        return data_generator
 
     def _init_envs(self, config):
         config.defrost()
@@ -130,6 +145,9 @@ class RepresentationGenerator:
         # Done is true on the first step of each episode (weird convention):
         dones = [True] * self._num_envs
 
+        # Track the episode info to deduplicate episodes from cycling environments:
+        previous_episodes = self.envs.current_episodes()
+
         step_data = self._data_generator.generate(observations, rewards, dones, None)
         for ep, data in zip(rollout_data, step_data):
             ep.append(data)
@@ -138,7 +156,7 @@ class RepresentationGenerator:
         while self._remaining_ep_set:
             # "next_actions" contains the actions from the BC dataset:
             actions = [o["next_actions"] for o in observations]
-            previous_episodes = self.envs.current_episodes()
+
             outputs = self.envs.step(actions)
             observations, rewards, dones, infos = zip(*outputs)
 
@@ -158,7 +176,11 @@ class RepresentationGenerator:
             )
 
             # If done, save the episode (the current obs is for the next ep):
-            for ep, ep_metadata, done in zip(rollout_data, previous_episodes, dones):
+            for i, ep in enumerate(rollout_data):
+                # for ep, ep_metadata, done in zip(rollout_data, previous_episodes, dones):
+                ep_metadata = previous_episodes[i]
+                done = dones[i]
+
                 if done:
                     # Each element of ep is a list of different data types. Concat each
                     # data type into a separate array:
@@ -170,6 +192,8 @@ class RepresentationGenerator:
                     )
                     self._save_data(data, ep_id)
                     ep.clear()
+                    # This env is now on a new ep, so update its metadata:
+                    previous_episodes[i] = self.envs.call_at(i, CURRENT_EPISODE_NAME)
 
             for ep, data in zip(rollout_data, step_data):
                 ep.append(data)
@@ -186,7 +210,7 @@ class ClipGenerator:
         batch_size=64,
         device="cuda",
         model_path=None,
-        use_float16="float32",
+        use_float16=True,
     ):
         self._batch_size = batch_size
         self._device = device
@@ -219,7 +243,10 @@ class ClipGenerator:
             last_two_hidden_layers.append(torch.stack(outputs[2][-2:], dim=1))
 
         if return_tensors:
-            return torch.cat(clip_embeddings), torch.cat(last_two_hidden_layers)
+            return (
+                torch.cat(clip_embeddings).to(self._dtype),
+                torch.cat(last_two_hidden_layers).to(self._dtype),
+            )
 
         clip_embeddings = (
             torch.cat(clip_embeddings).detach().cpu().to(self._dtype).numpy()
@@ -229,6 +256,154 @@ class ClipGenerator:
         )
         # Return all data as a sequence of tuples for each environment:
         return zip(clip_embeddings, last_two_hidden_layers)
+
+
+class Vc1Generator:
+
+    def __init__(
+        self,
+        batch_size=64,
+        device="cuda",
+        use_float16=True,
+        model_path=None,
+    ):
+        self._batch_size = batch_size
+        self._device = device
+        self._dtype = torch.float16 if use_float16 else torch.float32
+
+        model_path = model_path or model_utils.VC1_LARGE_NAME
+        self._model, _, self._model_transforms, _ = model_utils.load_model(model_path)
+
+        def dual_handle_outcome(self, x):
+            x = self.norm(x)
+            cls_tokens = x[:, 0]
+            embeddings = vit.reshape_embedding(x[:, 1:])
+            return cls_tokens, embeddings
+
+        # Monkey patch the model to return CLS and embeddings:
+        self._model.handle_outcome = types.MethodType(dual_handle_outcome, self._model)
+        self._model.to(self._device)
+
+        self.data_names = [
+            "cls",
+            "last_hidden_layer",
+            "last_hidden_layer_pooled",
+        ]
+
+    @torch.no_grad()
+    def generate(self, observations, rewards, dones, infos, return_tensors=False):
+        images = torch.stack([torch.tensor(o["rgb"]) for o in observations])
+        images = einops.rearrange(images, "b h w c -> b c h w")
+        images = images.to(self._device, dtype=torch.float32)
+        cls_tokens = []
+        embeddings = []
+        pooled_embeddings = []
+
+        pool_fn = torch.nn.AvgPool2d(4, padding=1, count_include_pad=False)
+
+        for batch in batched(images, self._batch_size):
+            # TODO: Why does eai-vc readme say "The img loaded should be Bx3x250x250"?
+            # It appears to be resized by the first transform anyway.
+            batch = batch / 255.0
+            # Output will be of size Bx3x224x224
+            batch = self._model_transforms(batch)
+            cls, last_hidden_layer = self._model(batch)
+
+            # Add sequence dim to cls to match token sequences:
+            cls_tokens.append(cls.unsqueeze(1).unsqueeze(1))
+
+            reshape = lambda t: einops.rearrange(
+                t, "batch tok seq1 seq2 -> batch seq1 seq2 tok"
+            )
+            embeddings.append(reshape(last_hidden_layer))
+            pooled_embeddings.append(reshape(pool_fn(last_hidden_layer)))
+
+        if return_tensors:
+            return (
+                torch.cat(cls_tokens).to(self._dtype),
+                torch.cat(embeddings).to(self._dtype),
+                torch.cat(pooled_embeddings).to(self._dtype),
+            )
+
+        cls_tokens = torch.cat(cls_tokens).detach().cpu().to(self._dtype).numpy()
+        embeddings = torch.cat(embeddings).detach().cpu().to(self._dtype).numpy()
+        pooled_embeddings = (
+            torch.cat(pooled_embeddings).detach().cpu().to(self._dtype).numpy()
+        )
+        # Return all data as a sequence of tuples for each environment:
+        return zip(cls_tokens, embeddings, pooled_embeddings)
+
+
+class CogVlmGenerator:
+
+    def __init__(
+        self,
+        batch_size=2,
+        device="cuda",
+        use_float16=True,
+        model_path=None,
+        prompt_sequence=None,
+    ):
+        import Pyro5.api
+
+        self._batch_size = batch_size
+        self._device = device
+        self._dtype = torch.float16 if use_float16 else torch.float32
+
+        self._pyro_server = Pyro5.api.Proxy("PYRONAME:fmrl.vlm_server")
+        self._pyro_server.start(
+            model_path,
+            prompt_sequence,
+            batch_size=batch_size,
+            device=device,
+            label_every=1,
+        )
+
+        self.data_names = [
+            "last_two_hidden_layers",
+        ]
+
+    @torch.no_grad()
+    def generate(self, observations, rewards, dones, infos, return_tensors=False):
+        images = [Image.fromarray(o["rgb"]) for o in observations]
+
+        last_two_hidden_layers = []
+
+        for img in images:
+            self._pyro_server.add_samples(pickle.dumps(transitions))
+
+
+        for batch in batched(images, self._batch_size):
+            # TODO: Why does eai-vc readme say "The img loaded should be Bx3x250x250"?
+            # It appears to be resized by the first transform anyway.
+            batch = batch / 255.0
+            # Output will be of size Bx3x224x224
+            batch = self._model_transforms(batch)
+            cls, last_hidden_layer = self._model(batch)
+
+            # Add sequence dim to cls to match token sequences:
+            cls_tokens.append(cls.unsqueeze(1).unsqueeze(1))
+
+            reshape = lambda t: einops.rearrange(
+                t, "batch tok seq1 seq2 -> batch seq1 seq2 tok"
+            )
+            embeddings.append(reshape(last_hidden_layer))
+            pooled_embeddings.append(reshape(pool_fn(last_hidden_layer)))
+
+        if return_tensors:
+            return (
+                torch.cat(cls_tokens).to(self._dtype),
+                torch.cat(embeddings).to(self._dtype),
+                torch.cat(pooled_embeddings).to(self._dtype),
+            )
+
+        cls_tokens = torch.cat(cls_tokens).detach().cpu().to(self._dtype).numpy()
+        embeddings = torch.cat(embeddings).detach().cpu().to(self._dtype).numpy()
+        pooled_embeddings = (
+            torch.cat(pooled_embeddings).detach().cpu().to(self._dtype).numpy()
+        )
+        # Return all data as a sequence of tuples for each environment:
+        return zip(cls_tokens, embeddings, pooled_embeddings)
 
 
 class NonVisualObservationsGenerator:

@@ -24,9 +24,11 @@ set -x
 
 echo "In ObjectNav IL DDP"
 # python -u -m run \
-python -u -m torch.distributed.launch \
-    --use_env \
-    --nproc_per_node 2 \
+# python -u -m torch.distributed.launch \
+    # --use_env \
+    # --master_port 29502 \
+python -u -m torch.distributed.run \
+    --nproc_per_node 1 \
     run.py \
     --exp-config $config \
     --run-type train \
@@ -37,7 +39,7 @@ python -u -m torch.distributed.launch \
     IL.BehaviorCloning.num_steps 64 \
     IL.BehaviorCloning.num_mini_batch 32 \
     IL.BehaviorCloning.use_gradient_accumulation True \
-    IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
+    IL.BehaviorCloning.num_accumulated_gradient_steps 16 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
@@ -47,3 +49,4 @@ python -u -m torch.distributed.launch \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 4000 \
     POLICY.RGB_ENCODER.normalize_visual_inputs True \
+    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH /storage/dc/pvr_data/ten_percent/ep_index.json \
