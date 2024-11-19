@@ -799,7 +799,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         data_generator_name = generator_config.data_generator.name
 
         if data_generator_name == "clip":
-            generator_kwargs = generator_config["data_generator"].get("clip_kwargs", {})
+            generator_kwargs = generator_config["data_generator"]["clip_kwargs"]
             data_generator = ClipGenerator(**generator_kwargs)
 
         rewards, dones, infos = None, None, None
@@ -919,6 +919,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
                     # Write intermediate stats:
                     # TODO: Factor out
+                    # TODO: The last done envs are not being logged, as done=true
+                    # only on the next step.
                     num_episodes_completed = len(stats_episodes)
                     writer.add_scalar(
                         "performance/num_episodes_completed",
