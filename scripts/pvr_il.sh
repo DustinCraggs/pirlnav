@@ -22,8 +22,8 @@ echo "In ObjectNav IL DDP"
     # --use_env \
 # --rdzv_endpoint localhost:29502 \
 # --nnodes 1 \
+    # --master_port 29501 \
 python -u -m torch.distributed.run \
-    --master_port 29501 \
     --nproc_per_node 1 \
     run.py \
     --exp-config $config \
@@ -31,15 +31,15 @@ python -u -m torch.distributed.run \
     --seed 1000 \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
+    WB.GROUP "pvr_il" \
     WB.RUN_NAME $EXP_NAME \
     WB.MODE online \
-    WB.GROUP "pvr_il" \
     TRAINER_NAME "pvr-pirlnav-il" \
     NUM_UPDATES 391000 \
     NUM_ENVIRONMENTS 32 \
     IL.BehaviorCloning.wd 1e-6 \
     IL.BehaviorCloning.num_steps 64 \
-    IL.BehaviorCloning.num_mini_batch 2 \
+    IL.BehaviorCloning.num_mini_batch 1 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
@@ -50,6 +50,6 @@ python -u -m torch.distributed.run \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
-    TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/vc_1_data" \
+    TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/clip_data" \
     TASK_CONFIG.PVR.non_visual_obs_data_path "$PVR_DIR/non_visual_data"
     # TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/clip_data" \

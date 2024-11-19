@@ -118,12 +118,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             dtype=np.int64,
         )
 
-        # obs_space["gps"] = spaces.Box(
-        #     low=np.finfo(np.float32).min,
-        #     high=np.finfo(np.float32).max,
-        #     shape=(2,),
-        #     dtype=np.float32,
-        # )
+        obs_space["gps"] = spaces.Box(
+            low=np.finfo(np.float32).min,
+            high=np.finfo(np.float32).max,
+            shape=(2,),
+            dtype=np.float32,
+        )
 
         # Not sure why these are set as discrete:
         obs_space["inflection_weight"] = spaces.Discrete(1)
@@ -136,12 +136,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         #     dtype=np.float32,
         # )
 
-        # obs_space["compass"] = spaces.Box(
-        #     low=-np.pi,
-        #     high=np.pi,
-        #     shape=(1,),
-        #     dtype=np.float32,
-        # )
+        obs_space["compass"] = spaces.Box(
+            low=-np.pi,
+            high=np.pi,
+            shape=(1,),
+            dtype=np.float32,
+        )
 
         # The first dimension of the shapes is the batch size:
         pvr_spaces = {

@@ -26,8 +26,8 @@ echo "In ObjectNav IL DDP"
 # python -u -m run \
 # python -u -m torch.distributed.launch \
     # --use_env \
-    # --master_port 29502 \
 python -u -m torch.distributed.run \
+    --master_port 29502 \
     --nproc_per_node 1 \
     run.py \
     --exp-config $config \
@@ -39,14 +39,15 @@ python -u -m torch.distributed.run \
     IL.BehaviorCloning.num_steps 64 \
     IL.BehaviorCloning.num_mini_batch 32 \
     IL.BehaviorCloning.use_gradient_accumulation True \
-    IL.BehaviorCloning.num_accumulated_gradient_steps 16 \
+    IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
+    WB.GROUP pirlnav_il \
     WB.RUN_NAME $EXP_NAME \
-    WB.GROUP pirlnav_orig_bc \
+    WB.MODE online \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 4000 \
     POLICY.RGB_ENCODER.normalize_visual_inputs True \
-    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH /storage/dc/pvr_data/ten_percent/ep_index.json \
+    # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH /storage/dc/pvr_data/ten_percent/ep_index.json \

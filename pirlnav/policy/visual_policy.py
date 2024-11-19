@@ -38,6 +38,7 @@ class ObjectNavILMAENet(Net):
         use_pvr_encoder: bool = False,
         pvr_token_dim: Optional[int] = None,
         pvr_obs_keys: Optional[list] = None,
+        disable_visual_inputs: bool = True,
     ):
         super().__init__()
         self.policy_config = policy_config
@@ -56,6 +57,8 @@ class ObjectNavILMAENet(Net):
 
         self.use_pvr_encoder = use_pvr_encoder
         self.pvr_obs_keys = pvr_obs_keys
+
+        self.disable_visual_inputs = disable_visual_inputs
 
         print(observation_space.spaces)
 
@@ -92,7 +95,9 @@ class ObjectNavILMAENet(Net):
             self.prev_action_embedding = nn.Embedding(num_actions + 1, 32)
             rnn_input_size += self.prev_action_embedding.embedding_dim
 
-        if use_pvr_encoder:
+        if self.disable_visual_inputs:
+            self.visual_encoder = None
+        elif use_pvr_encoder:
             self.non_visual_embedding = nn.Linear(rnn_input_size, pvr_token_dim)
             self.pvr_encoder = PvrEncoder(
                 pvr_token_dim,
@@ -125,19 +130,19 @@ class ObjectNavILMAENet(Net):
             rnn_input_size += policy_config.RGB_ENCODER.hidden_size
             logger.info("RGB encoder is {}".format(policy_config.RGB_ENCODER.backbone))
 
+            # load pretrained weights
+            if rgb_config.pretrained_encoder is not None:
+                msg = load_encoder(self.visual_encoder, rgb_config.pretrained_encoder)
+                logger.info(
+                    "Using weights from {}: {}".format(rgb_config.pretrained_encoder, msg)
+                )
+
+            # freeze backbone
+            if rgb_config.freeze_backbone:
+                for p in self.visual_encoder.backbone.parameters():
+                    p.requires_grad = False
+
         self.rnn_input_size = rnn_input_size
-
-        # load pretrained weights
-        if rgb_config.pretrained_encoder is not None:
-            msg = load_encoder(self.visual_encoder, rgb_config.pretrained_encoder)
-            logger.info(
-                "Using weights from {}: {}".format(rgb_config.pretrained_encoder, msg)
-            )
-
-        # freeze backbone
-        if rgb_config.freeze_backbone:
-            for p in self.visual_encoder.backbone.parameters():
-                p.requires_grad = False
 
         logger.info(
             "State enc: rnn_input_size {} - hidden_size {} - rnn_type {} - num_recurrent_layers {}".format(
@@ -209,8 +214,8 @@ class ObjectNavILMAENet(Net):
             )
             x.append(prev_actions_embedding)
 
-        nv_obs = torch.cat(x, dim=1)
-        if self.use_pvr_encoder:
+        if self.use_pvr_encoder and not self.disable_visual_inputs:
+            nv_obs = torch.cat(x, dim=1)
             nv_tokens = self.non_visual_embedding(nv_obs).unsqueeze(1)
             # TODO: This won't work for PVR tokens of different shape. Need dict of
             # PVR encoders instead.
