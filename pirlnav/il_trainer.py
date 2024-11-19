@@ -12,6 +12,7 @@ import time
 from collections import defaultdict, deque
 from typing import Any, Dict, List
 
+from habitat.core.vector_env import CURRENT_EPISODE_NAME
 import numpy as np
 import torch
 import tqdm
@@ -700,11 +701,12 @@ class ILEnvDDPTrainer(PPOTrainer):
                 logger.warn(f"Evaluating with {total_num_eps} instead.")
                 number_of_eval_episodes = total_num_eps
 
+        current_episodes = self.envs.current_episodes()
+
         pbar = tqdm.tqdm(total=number_of_eval_episodes)
         logger.info("Sampling actions deterministically...")
         self.actor_critic.eval()
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
-            current_episodes = self.envs.current_episodes()
 
             with torch.no_grad():
                 (
@@ -752,16 +754,9 @@ class ILEnvDDPTrainer(PPOTrainer):
                 rewards_l, dtype=torch.float, device="cpu"
             ).unsqueeze(1)
             current_episode_reward += rewards
-            next_episodes = self.envs.current_episodes()
             envs_to_pause = []
             n_envs = self.envs.num_envs
             for i in range(n_envs):
-                if (
-                    next_episodes[i].scene_id,
-                    next_episodes[i].episode_id,
-                ) in stats_episodes:
-                    envs_to_pause.append(i)
-
                 # episode ended
                 if not not_done_masks[i].item():
                     pbar.update()
@@ -775,6 +770,12 @@ class ILEnvDDPTrainer(PPOTrainer):
                             current_episodes[i].episode_id,
                         )
                     ] = episode_stats
+
+                    self.log_running_eval_stats(
+                        stats_episodes,
+                        writer,
+                        self.num_steps_done,
+                    )
 
                     if len(self.config.VIDEO_OPTION) > 0:
                         ep_id = (
@@ -796,8 +797,17 @@ class ILEnvDDPTrainer(PPOTrainer):
 
                         rgb_frames[i] = []
 
+                    # Update current episodes for the done env and check if it needs to
+                    # be paused (i.e. its next episode has already been evaluated):
+                    current_episodes[i] = self.envs.call_at(i, CURRENT_EPISODE_NAME)
+                    if (
+                        current_episodes[i].scene_id,
+                        current_episodes[i].episode_id,
+                    ) in stats_episodes:
+                        envs_to_pause.append(i)
+
                 # episode continues
-                elif len(self.config.VIDEO_OPTION) > 0:
+                if len(self.config.VIDEO_OPTION) > 0:
                     # TODO move normalization / channel changing out of the policy and undo it here
                     frame = observations_to_image(
                         {k: v[i] for k, v in batch.items()}, infos[i]

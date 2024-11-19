@@ -912,33 +912,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         )
                     ] = episode_stats
 
-                    # Write intermediate stats:
-                    # TODO: Factor out
-                    # TODO: The last done envs are not being logged, as done=true
-                    # only on the next step.
-                    num_episodes_completed = len(stats_episodes)
-                    writer.add_scalar(
-                        "performance/num_episodes_completed",
-                        num_episodes_completed,
-                        num_episodes_completed,
+                    self.log_running_eval_stats(
+                        stats_episodes,
+                        writer,
+                        self.num_steps_done,
+                        profiler,
                     )
-                    writer.add_scalar(
-                        "results/number_of_successful_episodes",
-                        sum(v["success"] for v in stats_episodes.values()),
-                        num_episodes_completed,
-                    )
-
-                    # Log profiling data:
-                    for k, v in profiler.get_stats().items():
-                        writer.add_scalar(f"performance/{k}", v, num_episodes_completed)
-
-                    for k in next(iter(stats_episodes.values())).keys():
-                        total = sum(v[k] for v in stats_episodes.values())
-                        writer.add_scalar(
-                            f"running_averages/{k}",
-                            total / num_episodes_completed,
-                            num_episodes_completed,
-                        )
 
                     if len(self.config.VIDEO_OPTION) > 0:
                         ep_id = (

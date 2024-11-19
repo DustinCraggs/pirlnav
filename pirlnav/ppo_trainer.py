@@ -793,3 +793,36 @@ class PIRLNavPPOTrainer(PPOTrainer):
             writer.add_scalar(f"eval_metrics/{k}", v, step_id)
 
         self.envs.close()
+
+    def log_running_eval_stats(self, stats_episodes, writer, step, profiler=None):
+        # Write intermediate stats:
+        # TODO: The last done envs are not being logged, as done=true
+        # only on the next step.
+        num_episodes_completed = len(stats_episodes)
+        writer.add_scalar(
+            "performance/num_episodes_completed",
+            num_episodes_completed,
+            num_episodes_completed,
+        )
+        writer.add_scalar(
+            "results/number_of_successful_episodes",
+            sum(v["success"] for v in stats_episodes.values()),
+            num_episodes_completed,
+        )
+
+        # Log profiling data:
+        if profiler is not None:
+            for k, v in profiler.get_stats().items():
+                writer.add_scalar(f"performance/{k}", v, num_episodes_completed)
+
+        for k in next(iter(stats_episodes.values())).keys():
+            total = sum(v[k] for v in stats_episodes.values())
+            writer.add_scalar(
+                f"running_averages/{k}",
+                total / num_episodes_completed,
+                num_episodes_completed,
+            )
+
+        for k, v in stats_episodes.items():
+            for k_, v_ in v.items():
+                writer.add_scalar(f"eval/{k_}", v_, step)
