@@ -98,4 +98,4 @@ PVR:
   # pvr_keys: ["last_hidden_layer_pooled"]
   non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
   # obs_keys: ["gps", "objectgoal", "compass", "next_actions", "inflection_weight", "last_hidden_layer_pooled"]
-  obs_keys: ["gps", "objectgoal", "compass", "next_actions", "inflection_weight", "last_two_hidden_layers"]
+  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]

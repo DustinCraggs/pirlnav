@@ -17,13 +17,15 @@ mkdir -p $TENSORBOARD_DIR
 mkdir -p $CHECKPOINT_DIR
 set -x
 
+# MAIN_PORT=8740
+
 echo "In ObjectNav IL DDP"
 # python -u -m run \
     # --use_env \
 # --rdzv_endpoint localhost:29502 \
 # --nnodes 1 \
-    # --master_port 29501 \
 python -u -m torch.distributed.run \
+    --master_port 29501 \
     --nproc_per_node 1 \
     run.py \
     --exp-config $config \
@@ -52,4 +54,4 @@ python -u -m torch.distributed.run \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/clip_data" \
     TASK_CONFIG.PVR.non_visual_obs_data_path "$PVR_DIR/non_visual_data"
-    # TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/clip_data" \
+    # TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/vc_1_data" \

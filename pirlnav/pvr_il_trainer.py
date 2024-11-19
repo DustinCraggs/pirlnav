@@ -188,18 +188,22 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         self._obs_space = self._make_observation_space(pvr_shapes, num_goals)
         self._pvr_token_dim = pvr_shapes[pvr_config.pvr_keys[0]][-1]
 
-    def _collect_demonstration_batch(self) -> int:
-        """
-        This replaces _collect_environment_result, as the environments are not required
-        when using the PVR demonstration dataset.
-        """
+    def _sample_next_batch(self):
         samples = []
         for i in range(self.config.NUM_ENVIRONMENTS):
             # The datasets automatically cycle:
             samples.append(next(self._pvr_dataloader_iters[i]))
 
         batch_keys = samples[0].keys()
-        batch = {k: torch.stack([s[k] for s in samples], dim=0) for k in batch_keys}
+        # Stack the tensors from each dataloader:
+        return {k: torch.stack([s[k] for s in samples], dim=0) for k in batch_keys}
+
+    def _collect_demonstration_batch(self) -> int:
+        """
+        This replaces _collect_environment_result, as the environments are not required
+        when using the PVR demonstration dataset.
+        """
+        batch = self._sample_next_batch()
 
         # TODO: The observations from the dataset are already batched, but would using
         # the cache still meaningfully impact performance?
@@ -214,19 +218,40 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         # num_steps = min(self.config.IL.BehaviorCloning.num_steps, len(actions))
         num_steps = self.config.IL.BehaviorCloning.num_steps
 
-        for step in range(num_steps):
+        if self._first_step:
+            # Need to manually insert the first observation (as in ppo_trainer.py), as 
+            # interface only allows setting next obs for some reason:
+            first_obs = {k: v[:, 0] for k, v in observations.items()}
+            self.rollouts.buffers["observations"][0] = first_obs
+            # Also need to set first action:
+            self.rollouts.insert(actions=actions[:, 0].reshape(-1, 1))
+            
+            self._first_step = False
+        else:
+            self.rollouts.insert(self._prev_actions)
+
+        # Start from idx 1 if first step, else 0:
+        start_idx = int(self._first_step)
+        for step in range(start_idx, num_steps):
             # Providing last action here (standard IL trainer does this on the next
             # iteration):
-            this_step_obs = {k: v[:, step] for k, v in observations.items()}
+            step_obs = {k: v[:, step] for k, v in observations.items()}
 
-            self.rollouts.insert(
-                next_observations=this_step_obs,
-                actions=actions[:, step].reshape(-1, 1),
-                rewards=rewards[:, step].reshape(-1, 1),
-                next_masks=~dones[:, step].reshape(-1, 1),
-                buffer_index=0,
-            )
+            step_actions = actions[:, step].reshape(-1, 1)
+            # step_rewards = rewards[:, step].reshape(-1, 1)
+            step_next_masks = ~dones[:, step].reshape(-1, 1)
+
+            # Obs and masks are inserted for the *next* step, so insert before advance:
+            self.rollouts.insert(next_observations=step_obs, next_masks=step_next_masks)
             self.rollouts.advance_rollout(0)
+
+            # The final actions need to be applied at the start of the next batch:
+            if step < num_steps - 1:
+                # After advance, can insert the actions that occur after step_obs:
+                self.rollouts.insert(actions=step_actions)
+            else:
+                # Save the last actions for the next batch:
+                self._prev_actions = dict(actions=step_actions)
 
         # Return number of steps collected
         return num_steps * self.config.NUM_ENVIRONMENTS
@@ -296,6 +321,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         )
 
     def _init_train(self):
+        # Need to track the first step, as this is a special case for RolloutStorage
+        # insertion:
+        self._first_step = True
+
         resume_state = load_resume_state(self.config)
         if resume_state is not None:
             self.config: Config = resume_state["config"]
@@ -413,6 +442,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             discrete_actions=discrete_actions,
         )
         self.rollouts.to(self.device)
+
+        # batch = self._sample_next_batch()
+        # self.rollouts.buffers["observations"][0] = batch  # type: ignore
 
         num_envs = self.config.NUM_ENVIRONMENTS
         self.current_episode_reward = torch.zeros(num_envs, 1)

@@ -60,8 +60,6 @@ class ObjectNavILMAENet(Net):
 
         self.disable_visual_inputs = disable_visual_inputs
 
-        print(observation_space.spaces)
-
         if EpisodicGPSSensor.cls_uuid in observation_space.spaces:
             input_gps_dim = observation_space.spaces[EpisodicGPSSensor.cls_uuid].shape[
                 0
