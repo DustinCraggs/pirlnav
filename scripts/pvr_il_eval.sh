@@ -8,6 +8,7 @@ DATA_DIR=$1
 PVR_DIR=$2
 EVAL_CHECKPOINT_DIR=$3
 EXP_NAME=$4
+GROUP_NAME=$5
 
 # DATA_PATH="$DATA_DIR/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 DATA_PATH="$DATA_DIR/tasks/objectnav_hm3d_v1/"
@@ -21,7 +22,7 @@ python -u -m run \
     --run-type eval \
     EVAL_CKPT_PATH_DIR $EVAL_CHECKPOINT_DIR \
     VIDEO_DIR "$DATA_DIR/videos/$1/" \
-    WB.GROUP "pvr_vc_1_eval" \
+    WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
     WB.MODE online \
     TRAINER_NAME "pvr-pirlnav-il" \

@@ -18,9 +18,11 @@ python run.py \
     TASK_CONFIG.REPRESENTATION_GENERATOR.batch_chunk_size 1000 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path $clip_model_path \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name vc_1 \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/vc_1_data \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name non_visual \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/non_visual_data \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name raw_image \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/raw_image_data \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name vc_1 \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/vc_1_data \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/clip_data \
-    # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name non_visual \
-    # TASK_CONFIG.REPRESENTATION_GENERATOR.output_zarr_path $output_dir/non_visual_data \

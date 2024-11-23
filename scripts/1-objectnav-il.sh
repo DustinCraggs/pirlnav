@@ -12,6 +12,7 @@ config="configs/experiments/il_objectnav.yaml"
 
 DATA_DIR=$1
 EXP_NAME=$2
+GROUP_NAME=$3
 
 DATA_PATH="$1/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 TENSORBOARD_DIR="$1/tb/objectnav_il/$2/"
@@ -43,11 +44,12 @@ python -u -m torch.distributed.run \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
-    WB.GROUP pirlnav_il \
+    WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
     WB.MODE online \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     NUM_CHECKPOINTS -1 \
-    CHECKPOINT_INTERVAL 4000 \
+    CHECKPOINT_INTERVAL 500 \
     POLICY.RGB_ENCODER.normalize_visual_inputs True \
-    # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH /storage/dc/pvr_data/ten_percent/ep_index.json \
+    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH /storage/dc/pvr_data/one_percent/ep_index.json \
+    # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "temp/ep_index.json" \
