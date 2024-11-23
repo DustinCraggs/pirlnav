@@ -87,7 +87,8 @@ def generate_dataset_split_json(config: Config, output_path, stride) -> None:
 
 
 def filter_episodes(episodes, episode_index):
-    episode_index = set([tuple(ep.values()) for ep in episode_index])
+    keys = ["scene_id", "episode_id", "object_category"]
+    episode_index = set([tuple(ep[k] for k in keys) for ep in episode_index])
     return [
         ep
         for ep in episodes
