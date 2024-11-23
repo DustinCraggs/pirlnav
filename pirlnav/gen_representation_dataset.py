@@ -55,6 +55,8 @@ class RepresentationGenerator:
 
         if data_generator_name == "non_visual":
             data_generator = NonVisualObservationsGenerator()
+        elif data_generator_name == "raw_image":
+            data_generator = RawImageGenerator()
         elif data_generator_name == "clip":
             generator_kwargs = generator_config["data_generator"]["clip_kwargs"]
             data_generator = ClipGenerator(**generator_kwargs)
@@ -201,6 +203,19 @@ class RepresentationGenerator:
             ep_count += sum(dones)
             if sum(dones) > 0:
                 print(f"Episodes completed: {ep_count}")
+
+
+class RawImageGenerator:
+
+    def __init__(self):
+        self.data_names = ["rgb"]
+
+    @torch.no_grad()
+    def generate(self, observations, rewards, dones, infos, return_tensors=False):
+        images = [(o["rgb"],) for o in observations]
+        if return_tensors:
+            return torch.stack(images)
+        return images
 
 
 class ClipGenerator:
@@ -371,7 +386,6 @@ class CogVlmGenerator:
 
         for img in images:
             self._pyro_server.add_samples(pickle.dumps(transitions))
-
 
         for batch in batched(images, self._batch_size):
             # TODO: Why does eai-vc readme say "The img loaded should be Bx3x250x250"?
