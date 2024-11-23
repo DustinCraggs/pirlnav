@@ -78,10 +78,9 @@ class InflectionWeightSensor(Sensor):
         **kwargs
     ):
         if task._is_resetting:  # reset
-            self.timestep = 0
-
+            self.timestep = 1
         inflection_weight = 1.0
-        if self.timestep == 0:
+        if self.timestep <= 1:
             inflection_weight = 1.0
         elif self.timestep >= len(episode.reference_replay):
             inflection_weight = 1.0
