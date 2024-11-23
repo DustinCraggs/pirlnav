@@ -126,15 +126,15 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         )
 
         # Not sure why these are set as discrete:
-        obs_space["inflection_weight"] = spaces.Discrete(1)
+        # obs_space["inflection_weight"] = spaces.Discrete(1)
         # obs_space["next_actions"] = spaces.Discrete(1)
         # obs_space["prev_actions"] = spaces.Discrete(1)
-        # obs_space["inflection_weight"] = spaces.Box(
-        #     low=np.finfo(np.float32).min,
-        #     high=np.finfo(np.float32).max,
-        #     shape=(1,),
-        #     dtype=np.float32,
-        # )
+        obs_space["inflection_weight"] = spaces.Box(
+            low=np.finfo(np.float32).min,
+            high=np.finfo(np.float32).max,
+            shape=(1,),
+            dtype=np.float32,
+        )
 
         obs_space["compass"] = spaces.Box(
             low=-np.pi,
@@ -145,7 +145,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         # The first dimension of the shapes is the batch size:
         pvr_spaces = {
-            k: spaces.Box(low=-np.inf, high=np.inf, shape=v[1:])
+            k: spaces.Box(low=-np.inf, high=np.inf, shape=v[1:], dtype=np.float16)
             for k, v in pvr_shapes.items()
         }
         obs_space = {**obs_space, **pvr_spaces}
@@ -219,16 +219,17 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         num_steps = self.config.IL.BehaviorCloning.num_steps
 
         if self._first_step:
-            # Need to manually insert the first observation (as in ppo_trainer.py), as 
+            # Need to manually insert the first observation (as in ppo_trainer.py), as
             # interface only allows setting next obs for some reason:
             first_obs = {k: v[:, 0] for k, v in observations.items()}
+            first_obs["inflection_weight"] = first_obs["inflection_weight"].reshape(-1, 1)
+            first_masks = ~dones[:, 0].reshape(-1, 1)
             self.rollouts.buffers["observations"][0] = first_obs
+            self.rollouts.buffers["masks"][0] = first_masks
             # Also need to set first action:
             self.rollouts.insert(actions=actions[:, 0].reshape(-1, 1))
-            
-            self._first_step = False
         else:
-            self.rollouts.insert(self._prev_actions)
+            self.rollouts.insert(actions=self._prev_actions)
 
         # Start from idx 1 if first step, else 0:
         start_idx = int(self._first_step)
@@ -236,6 +237,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             # Providing last action here (standard IL trainer does this on the next
             # iteration):
             step_obs = {k: v[:, step] for k, v in observations.items()}
+            step_obs["inflection_weight"] = step_obs["inflection_weight"].reshape(-1, 1)
 
             step_actions = actions[:, step].reshape(-1, 1)
             # step_rewards = rewards[:, step].reshape(-1, 1)
@@ -251,8 +253,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 self.rollouts.insert(actions=step_actions)
             else:
                 # Save the last actions for the next batch:
-                self._prev_actions = dict(actions=step_actions)
+                self._prev_actions = step_actions
 
+        self._first_step = False
         # Return number of steps collected
         return num_steps * self.config.NUM_ENVIRONMENTS
 
@@ -709,6 +712,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         Returns:
             None
         """
+        # Add replay sensors
+        # self.config.defrost()
+        # self.config.TASK_CONFIG.TASK.SENSORS.extend(
+        #     ["DEMONSTRATION_SENSOR", "INFLECTION_WEIGHT_SENSOR"]
+        # )
+        # self.config.freeze()
+
         profiler = SimpleProfiler()
         print(f"-------------- {checkpoint_path} --------------")
         # TODO: Don't need to init the whold dataset here just to get the metadata:
@@ -881,6 +891,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 ]
             else:
                 step_data = [a.item() for a in actions.to(device="cpu")]
+            
+            # step_data = [observations[0]["next_actions"]]
 
             profiler.exit("get_actions")
             profiler.enter("step_envs")
@@ -944,12 +956,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         )
                     ] = episode_stats
 
-                    self.log_running_eval_stats(
-                        stats_episodes,
-                        writer,
-                        self.num_steps_done,
-                        profiler,
-                    )
+                    self.log_running_eval_stats(stats_episodes, writer, profiler)
 
                     if len(self.config.VIDEO_OPTION) > 0:
                         ep_id = (
@@ -1054,3 +1061,36 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             writer.add_scalar(f"eval_metrics/{k}", v, step_id)
 
         self.envs.close()
+
+    def log_running_eval_stats(self, stats_episodes, writer, profiler=None):
+        # Write intermediate stats:
+        # TODO: The last done envs are not being logged, as done=true
+        # only on the next step.
+        num_episodes_completed = len(stats_episodes)
+        writer.add_scalar(
+            "performance/num_episodes_completed",
+            num_episodes_completed,
+            num_episodes_completed,
+        )
+        writer.add_scalar(
+            "results/number_of_successful_episodes",
+            sum(v["success"] for v in stats_episodes.values()),
+            num_episodes_completed,
+        )
+
+        # Log profiling data:
+        if profiler is not None:
+            for k, v in profiler.get_stats().items():
+                writer.add_scalar(f"performance/{k}", v, num_episodes_completed)
+
+        for k in next(iter(stats_episodes.values())).keys():
+            total = sum(v[k] for v in stats_episodes.values())
+            writer.add_scalar(
+                f"running_averages/{k}",
+                total / num_episodes_completed,
+                num_episodes_completed,
+            )
+
+        for k, v in stats_episodes.items():
+            for k_, v_ in v.items():
+                writer.add_scalar(f"eval/{k_}", v_, num_episodes_completed)

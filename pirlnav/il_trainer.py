@@ -78,6 +78,7 @@ class ILEnvDDPTrainer(PPOTrainer):
             get_env_class(config.ENV_NAME),
             workers_ignore_signals=is_slurm_batch_job(),
             episode_index=sub_split_index,
+            # shuffle_scenes=False,
         )
 
     def _setup_actor_critic_agent(self, il_cfg: Config) -> None:
@@ -607,7 +608,7 @@ class ILEnvDDPTrainer(PPOTrainer):
 
         config.defrost()
         config.TASK_CONFIG.DATASET.SPLIT = config.EVAL.SPLIT
-        config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
+        # config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v1"
         config.freeze()
 
         if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
@@ -771,11 +772,7 @@ class ILEnvDDPTrainer(PPOTrainer):
                         )
                     ] = episode_stats
 
-                    self.log_running_eval_stats(
-                        stats_episodes,
-                        writer,
-                        self.num_steps_done,
-                    )
+                    self.log_running_eval_stats(stats_episodes, writer)
 
                     if len(self.config.VIDEO_OPTION) > 0:
                         ep_id = (
@@ -860,3 +857,36 @@ class ILEnvDDPTrainer(PPOTrainer):
             writer.add_scalar(f"eval_metrics/{k}", v, step_id)
 
         self.envs.close()
+
+    def log_running_eval_stats(self, stats_episodes, writer, profiler=None):
+        # Write intermediate stats:
+        # TODO: The last done envs are not being logged, as done=true
+        # only on the next step.
+        num_episodes_completed = len(stats_episodes)
+        writer.add_scalar(
+            "performance/num_episodes_completed",
+            num_episodes_completed,
+            num_episodes_completed,
+        )
+        writer.add_scalar(
+            "results/number_of_successful_episodes",
+            sum(v["success"] for v in stats_episodes.values()),
+            num_episodes_completed,
+        )
+
+        # Log profiling data:
+        if profiler is not None:
+            for k, v in profiler.get_stats().items():
+                writer.add_scalar(f"performance/{k}", v, num_episodes_completed)
+
+        for k in next(iter(stats_episodes.values())).keys():
+            total = sum(v[k] for v in stats_episodes.values())
+            writer.add_scalar(
+                f"running_averages/{k}",
+                total / num_episodes_completed,
+                num_episodes_completed,
+            )
+
+        for k, v in stats_episodes.items():
+            for k_, v_ in v.items():
+                writer.add_scalar(f"eval/{k_}", v_, num_episodes_completed)
