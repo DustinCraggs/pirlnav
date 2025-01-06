@@ -5,9 +5,10 @@ export HABITAT_SIM_LOG=quiet
 config="configs/experiments/il_objectnav.yaml"
 
 DATA_DIR=$1
-PVR_DIR=$2
-EXP_NAME=$3
-GROUP_NAME=$4
+NV_DATASET=$2
+PVR_DATASET=$3
+EXP_NAME=$4
+GROUP_NAME=$5
 
 DATA_PATH="$DATA_DIR/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 TENSORBOARD_DIR="$DATA_DIR/tb/objectnav_il/$EXP_NAME/"
@@ -26,7 +27,7 @@ echo "In ObjectNav IL DDP"
     # --rdzv_endpoint localhost:29503 \
 # --nnodes 1 \
 python -u -m torch.distributed.run \
-    --master_port 29503 \
+    --master_port 29502 \
     --nproc_per_node 1 \
     run.py \
     --exp-config $config \
@@ -38,11 +39,11 @@ python -u -m torch.distributed.run \
     WB.RUN_NAME $EXP_NAME \
     WB.MODE online \
     TRAINER_NAME "pvr-pirlnav-il" \
-    NUM_UPDATES 391000 \
-    NUM_ENVIRONMENTS 1 \
+    NUM_UPDATES 102000 \
+    NUM_ENVIRONMENTS 32 \
     IL.BehaviorCloning.wd 1e-6 \
-    IL.BehaviorCloning.num_steps 2048 \
-    IL.BehaviorCloning.num_mini_batch 1 \
+    IL.BehaviorCloning.num_steps 64 \
+    IL.BehaviorCloning.num_mini_batch 2 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
@@ -52,8 +53,14 @@ python -u -m torch.distributed.run \
     POLICY.PVR_ENCODER.dropout 0.1 \
     POLICY.SEQ2SEQ.use_prev_action True \
     NUM_CHECKPOINTS -1 \
-    CHECKPOINT_INTERVAL 1000 \
+    CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
-    TASK_CONFIG.PVR.non_visual_obs_data_path "$PVR_DIR/non_visual_data" \
-    TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/vc_1_data" \
-    # TASK_CONFIG.PVR.pvr_data_path "$PVR_DIR/clip_data" \
+    TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
+    TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
+    TASK_CONFIG.PVR.use_pvr_encoder True \
+    # NUM_UPDATES 52000 \
+    # TASK_CONFIG.PVR.use_fixed_size_embedding True \
+
+
+# MAIN_PORT=8741 CUDA_VISIBLE_DEVICES=0 ./scripts/pvr_il.sh data /storage/dc/pvr_data/twenty_percent/non_visual_data/ /storage/dc/pvr_data/twenty_percent/clip_data/ clip_20pc ten_percent
+# MAIN_PORT=8742 CUDA_VISIBLE_DEVICES=1 ./scripts/pvr_il.sh data /storage/dc/pvr_data/twenty_five_percent/non_visual_data/ /storage/dc/pvr_data/twenty_five_percent/clip_data/ clip_25pc ten_percent

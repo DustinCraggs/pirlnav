@@ -222,7 +222,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             # Need to manually insert the first observation (as in ppo_trainer.py), as
             # interface only allows setting next obs for some reason:
             first_obs = {k: v[:, 0] for k, v in observations.items()}
-            first_obs["inflection_weight"] = first_obs["inflection_weight"].reshape(-1, 1)
+            first_obs["inflection_weight"] = first_obs["inflection_weight"].reshape(
+                -1, 1
+            )
             first_masks = ~dones[:, 0].reshape(-1, 1)
             self.rollouts.buffers["observations"][0] = first_obs
             self.rollouts.buffers["masks"][0] = first_masks
@@ -282,8 +284,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             self.config,
             observation_space,
             self.action_space,
-            True,
-            self._pvr_token_dim,
+            pvr_token_dim=self._pvr_token_dim,
         )
         self.actor_critic.to(self.device)
 
@@ -478,6 +479,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             rnn_hidden_states,
             dist_entropy,
             actual_action_loss,
+            accuracy,
         ) = self.agent.update(self.rollouts, accumulate_gradients, num_accum_steps)
 
         num_updates = self.num_updates_done + 1
@@ -502,6 +504,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             action_loss,
             dist_entropy,
             actual_action_loss,
+            accuracy,
         )
 
     @profiling_wrapper.RangeContext("train")
@@ -600,6 +603,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     action_loss,
                     dist_entropy,
                     actual_action_loss,
+                    accuracy,
                 ) = self._update_agent()
 
                 # With gradient accumulation, the weights may not have actually been
@@ -612,6 +616,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         action_loss=action_loss,
                         entropy=dist_entropy,
                         actual_action_loss=actual_action_loss,
+                        accuracy=accuracy,
                     ),
                     count_steps_delta,
                 )
@@ -846,6 +851,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         pbar = tqdm.tqdm(total=number_of_eval_episodes)
         logger.info("Sampling actions deterministically...")
         self.actor_critic.eval()
+        # while True:
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
             profiler.enter("entire_eval_iter")
             profiler.enter("generate_pvrs")
@@ -876,7 +882,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     not_done_masks,
                     deterministic=True,
                 )
-
+                # print(actions)
+                # print(torch.tensor([[observations[0]["next_actions"]]]))
+                # prev_actions.copy_(torch.tensor([[observations[0]["next_actions"]]]))  # type: ignore
+                # prev_actions.copy_(torch.tensor([[0]]))  # type: ignore
                 prev_actions.copy_(actions)  # type: ignore
 
             # NB: Move actions to CPU.  If CUDA tensors are
@@ -891,7 +900,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 ]
             else:
                 step_data = [a.item() for a in actions.to(device="cpu")]
-            
+
             # step_data = [observations[0]["next_actions"]]
 
             profiler.exit("get_actions")

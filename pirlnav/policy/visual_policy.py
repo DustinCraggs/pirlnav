@@ -1,3 +1,5 @@
+from collections import defaultdict
+import os
 import torch
 import torch.nn as nn
 from typing import Optional
@@ -36,6 +38,7 @@ class ObjectNavILMAENet(Net):
         rnn_type: str,
         num_recurrent_layers: int,
         use_pvr_encoder: bool = False,
+        use_fixed_size_embedding: bool = False,
         pvr_token_dim: Optional[int] = None,
         pvr_obs_keys: Optional[list] = None,
         disable_visual_inputs: bool = False,
@@ -56,6 +59,7 @@ class ObjectNavILMAENet(Net):
         )
 
         self.use_pvr_encoder = use_pvr_encoder
+        self.use_fixed_size_embedding = use_fixed_size_embedding
         self.pvr_obs_keys = pvr_obs_keys
 
         self.disable_visual_inputs = disable_visual_inputs
@@ -95,6 +99,8 @@ class ObjectNavILMAENet(Net):
 
         if self.disable_visual_inputs:
             self.visual_encoder = None
+        elif self.use_fixed_size_embedding:
+            rnn_input_size += pvr_token_dim
         elif use_pvr_encoder:
             self.non_visual_embedding = nn.Linear(rnn_input_size, pvr_token_dim)
             self.pvr_encoder = PvrEncoder(
@@ -132,7 +138,9 @@ class ObjectNavILMAENet(Net):
             if rgb_config.pretrained_encoder is not None:
                 msg = load_encoder(self.visual_encoder, rgb_config.pretrained_encoder)
                 logger.info(
-                    "Using weights from {}: {}".format(rgb_config.pretrained_encoder, msg)
+                    "Using weights from {}: {}".format(
+                        rgb_config.pretrained_encoder, msg
+                    )
                 )
 
             # freeze backbone
@@ -157,6 +165,8 @@ class ObjectNavILMAENet(Net):
         self._hidden_size = hidden_size
         self.train()
 
+        self.batch_store = defaultdict(list)
+
     @property
     def output_size(self):
         return self._hidden_size
@@ -177,6 +187,33 @@ class ObjectNavILMAENet(Net):
         """
         N = rnn_hidden_states.size(1)
         x = []
+
+        # print(f"observations {observations}")
+        # print(f"prev_actions {prev_actions}")
+        # print(f"masks {masks}")
+
+        # # Save tensors for all inputs to disk:
+        # num_batches = 640
+        # directory = "temp/pvr_train_vs_eval/eval_2"
+        # # directory = "temp/test_demo_acts_no_vis_transform"
+        # os.makedirs(directory, exist_ok=True)
+        # for name, data in observations.items():
+        #     self.batch_store[f"obs_{name}"].append(data.clone())
+        #     if len(self.batch_store[f"obs_{name}"]) == num_batches:
+        #         torch.save(
+        #             torch.cat(self.batch_store[f"obs_{name}"], dim=0),
+        #             f"{directory}/obs_{name}.pt",
+        #         )
+        # data_names = ["rnn_hidden_states", "prev_actions", "masks"]
+        # for name, data in zip(data_names, [rnn_hidden_states, prev_actions, masks]):
+        #     self.batch_store[name].append(data.clone())
+        #     if len(self.batch_store[name]) == num_batches:
+        #         torch.save(
+        #             torch.cat(self.batch_store[name], dim=0),
+        #             f"{directory}/{name}.pt",
+        #         )
+        # if len(self.batch_store["masks"]) == num_batches:
+        #     exit()
 
         if EpisodicGPSSensor.cls_uuid in observations:
             obs_gps = observations[EpisodicGPSSensor.cls_uuid]
@@ -212,14 +249,22 @@ class ObjectNavILMAENet(Net):
             )
             x.append(prev_actions_embedding)
 
-        if self.use_pvr_encoder and not self.disable_visual_inputs:
-            nv_obs = torch.cat(x, dim=1)
-            nv_tokens = self.non_visual_embedding(nv_obs).unsqueeze(1)
+        if self.disable_visual_inputs:
+            pass
+        elif self.use_fixed_size_embedding:
+            for k in self.pvr_obs_keys:
+                # Remove extra dimensions that exist to match sequential PVRs:
+                x.append(observations[k].squeeze(1).squeeze(1))
+        elif self.use_pvr_encoder:
+            # nv_obs = torch.cat(x, dim=1)
+            # nv_tokens = self.non_visual_embedding(nv_obs).unsqueeze(1)
+            nv_tokens = None
             # TODO: This won't work for PVR tokens of different shape. Need dict of
             # PVR encoders instead.
             # TODO: For multi-PVR, use single encoder and project to same
             # dimensionality?
             pvr_tokens = torch.cat([observations[k] for k in self.pvr_obs_keys])
+            # print(f"PVR TOKENS SHAPE {pvr_tokens.shape}")
             pvr_embedding = self.pvr_encoder(pvr_tokens, nv_tokens)
             x.append(pvr_embedding)
         elif self.visual_encoder is not None:
@@ -257,6 +302,7 @@ class ObjectNavILMAEPolicy(ILPolicy):
         rnn_type: str,
         num_recurrent_layers: int,
         use_pvr_encoder: bool = False,
+        use_fixed_size_embedding: bool = False,
         pvr_token_dim: Optional[int] = None,
         pvr_obs_keys: Optional[list] = None,
     ):
@@ -270,6 +316,7 @@ class ObjectNavILMAEPolicy(ILPolicy):
                 rnn_type=rnn_type,
                 num_recurrent_layers=num_recurrent_layers,
                 use_pvr_encoder=use_pvr_encoder,
+                use_fixed_size_embedding=use_fixed_size_embedding,
                 pvr_token_dim=pvr_token_dim,
                 pvr_obs_keys=pvr_obs_keys,
             ),
@@ -285,7 +332,6 @@ class ObjectNavILMAEPolicy(ILPolicy):
         config: Config,
         observation_space,
         action_space,
-        use_pvr_encoder=False,
         pvr_token_dim=None,
     ):
         return cls(
@@ -296,7 +342,8 @@ class ObjectNavILMAEPolicy(ILPolicy):
             hidden_size=config.POLICY.STATE_ENCODER.hidden_size,
             rnn_type=config.POLICY.STATE_ENCODER.rnn_type,
             num_recurrent_layers=config.POLICY.STATE_ENCODER.num_recurrent_layers,
-            use_pvr_encoder=use_pvr_encoder,
+            use_pvr_encoder=config.TASK_CONFIG.PVR.use_pvr_encoder,
+            use_fixed_size_embedding=config.TASK_CONFIG.PVR.use_fixed_size_embedding,
             pvr_token_dim=pvr_token_dim,
             pvr_obs_keys=config.TASK_CONFIG.PVR.pvr_keys,
         )

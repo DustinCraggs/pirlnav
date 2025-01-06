@@ -35,7 +35,7 @@ python -u -m torch.distributed.run \
     --run-type train \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
-    NUM_UPDATES 800000 \
+    NUM_UPDATES 52000 \
     NUM_ENVIRONMENTS 32 \
     IL.BehaviorCloning.num_steps 64 \
     IL.BehaviorCloning.num_mini_batch 32 \
@@ -49,7 +49,7 @@ python -u -m torch.distributed.run \
     WB.MODE online \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     NUM_CHECKPOINTS -1 \
-    CHECKPOINT_INTERVAL 500 \
+    CHECKPOINT_INTERVAL 2500 \
     POLICY.RGB_ENCODER.normalize_visual_inputs True \
-    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH /storage/dc/pvr_data/one_percent/ep_index.json \
+    TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH /storage/dc/pvr_data/ten_percent/ep_index.json \
     # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "temp/ep_index.json" \

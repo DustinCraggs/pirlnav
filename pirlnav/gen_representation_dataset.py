@@ -3,17 +3,20 @@ import os
 import pickle
 import types
 import einops
-from habitat.core.vector_env import CURRENT_EPISODE_NAME
 import numpy as np
 import torch
+import torchvision
 import zarr
 import tqdm
-
+import requests
+import io
+import base64
 
 from PIL import Image
 
 from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
 from habitat.core.environments import get_env_class
+from habitat.core.vector_env import CURRENT_EPISODE_NAME
 from vc_models.models.vit import model_utils, vit
 
 from transformers import CLIPVisionModel, AutoProcessor
@@ -63,6 +66,13 @@ class RepresentationGenerator:
         elif data_generator_name == "vc_1":
             generator_kwargs = generator_config["data_generator"]["vc_1_kwargs"]
             data_generator = Vc1Generator(**generator_kwargs)
+        elif data_generator_name == "cogvlm2":
+            generator_kwargs = generator_config["data_generator"]["cogvlm2_kwargs"]
+            generator_kwargs["prompt"] = (
+                "A robot is looking for an object in a house. Is there a chair, sofa, "
+                "toilet, bed, pot plant, or TV nearby? Where might it be found?"
+            )
+            data_generator = CogVlmGenerator(**generator_kwargs)
 
         return data_generator
 
@@ -299,6 +309,8 @@ class Vc1Generator:
         self._model.handle_outcome = types.MethodType(dual_handle_outcome, self._model)
         self._model.to(self._device)
 
+        self._img_transform = torchvision.transforms.ToTensor()
+
         self.data_names = [
             "cls",
             "last_hidden_layer",
@@ -307,9 +319,23 @@ class Vc1Generator:
 
     @torch.no_grad()
     def generate(self, observations, rewards, dones, infos, return_tensors=False):
-        images = torch.stack([torch.tensor(o["rgb"]) for o in observations])
-        images = einops.rearrange(images, "b h w c -> b c h w")
-        images = images.to(self._device, dtype=torch.float32)
+        # images = [o["rgb"].swapaxes(0, -1).astype(np.float32) for o in observations]
+        # print([img.shape for img in images])
+        images = [Image.fromarray(o["rgb"]) for o in observations]
+
+        images = [self._img_transform(img) for img in images]
+        images = torch.stack(images).to(self._device)
+        # print(f"images shape: {images.shape}")
+
+        # images_old = torch.stack([torch.tensor(o["rgb"]) for o in observations])
+        # print(f"images_old shape 1: {images_old.shape}")
+        # images_old = einops.rearrange(images_old, "b h w c -> b c h w")
+        # images_old = images_old.to(self._device, dtype=torch.float32)
+        # print(f"images_old shape 2: {images_old.shape}")
+
+        # torch.save(images, "temp/images.pt")
+        # torch.save(images_old, "temp/images_old.pt")
+
         cls_tokens = []
         embeddings = []
         pooled_embeddings = []
@@ -319,7 +345,6 @@ class Vc1Generator:
         for batch in batched(images, self._batch_size):
             # TODO: Why does eai-vc readme say "The img loaded should be Bx3x250x250"?
             # It appears to be resized by the first transform anyway.
-            batch = batch / 255.0
             # Output will be of size Bx3x224x224
             batch = self._model_transforms(batch)
             cls, last_hidden_layer = self._model(batch)
@@ -357,67 +382,83 @@ class CogVlmGenerator:
         device="cuda",
         use_float16=True,
         model_path=None,
-        prompt_sequence=None,
+        prompt=None,
+        num_hidden_layers=2,
+        visual_pooling_kernel_size=12,
     ):
-        import Pyro5.api
-
         self._batch_size = batch_size
         self._device = device
         self._dtype = torch.float16 if use_float16 else torch.float32
+        self._prompt = prompt
 
-        self._pyro_server = Pyro5.api.Proxy("PYRONAME:fmrl.vlm_server")
-        self._pyro_server.start(
-            model_path,
-            prompt_sequence,
-            batch_size=batch_size,
-            device=device,
-            label_every=1,
+        # Load the model:
+        response = requests.post(
+            "http://localhost:5000/load_model",
+            json={
+                "model_path": model_path,
+                "device": device,
+                "output_hidden_states": True,
+                "output_last_num_hidden_layers": num_hidden_layers,
+                "visual_pooling_kernel_size": visual_pooling_kernel_size,
+            },
         )
+        print(f"Load model response: {response.json()}")
 
         self.data_names = [
-            "last_two_hidden_layers",
+            "last_two_hidden_layers_pooled",
+            "masks",
         ]
+
+    @staticmethod
+    def make_files(images, prompt):
+        files = []
+        for i, image in enumerate(images):
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            buffer.seek(0)
+            files.append(("images", (f"image_{i}.png", buffer, "image/png")))
+            files.append(("prompts", (None, prompt)))
+        return files
+
+    @staticmethod
+    def base64_to_numpy(base64_array):
+        with io.BytesIO(base64_array.encode("latin-1")) as buffer:
+            # with io.BytesIO(base64.decodebytes(base64_array).encode("ascii")) as buffer:
+            return np.load(buffer)
 
     @torch.no_grad()
     def generate(self, observations, rewards, dones, infos, return_tensors=False):
         images = [Image.fromarray(o["rgb"]) for o in observations]
 
-        last_two_hidden_layers = []
-
-        for img in images:
-            self._pyro_server.add_samples(pickle.dumps(transitions))
+        last_two_hidden_layers_pooled = []
+        masks = []
 
         for batch in batched(images, self._batch_size):
-            # TODO: Why does eai-vc readme say "The img loaded should be Bx3x250x250"?
-            # It appears to be resized by the first transform anyway.
-            batch = batch / 255.0
-            # Output will be of size Bx3x224x224
-            batch = self._model_transforms(batch)
-            cls, last_hidden_layer = self._model(batch)
+            print(batch)
+            print(len(batch))
+            files = self.make_files(batch, self._prompt)
+            response = requests.post("http://localhost:5000/query_batch", files=files)
+            response_json = response.json()
 
-            # Add sequence dim to cls to match token sequences:
-            cls_tokens.append(cls.unsqueeze(1).unsqueeze(1))
-
-            reshape = lambda t: einops.rearrange(
-                t, "batch tok seq1 seq2 -> batch seq1 seq2 tok"
+            hidden_states = self.base64_to_numpy(response_json["hidden_states"])
+            hidden_state_masks = self.base64_to_numpy(
+                response_json["hidden_state_masks"]
             )
-            embeddings.append(reshape(last_hidden_layer))
-            pooled_embeddings.append(reshape(pool_fn(last_hidden_layer)))
+
+            last_two_hidden_layers_pooled.append(hidden_states)
+            masks.append(hidden_state_masks)
 
         if return_tensors:
             return (
-                torch.cat(cls_tokens).to(self._dtype),
-                torch.cat(embeddings).to(self._dtype),
-                torch.cat(pooled_embeddings).to(self._dtype),
+                torch.cat(last_two_hidden_layers_pooled).to(self._dtype),
+                torch.cat(masks).to(self._dtype),
             )
 
-        cls_tokens = torch.cat(cls_tokens).detach().cpu().to(self._dtype).numpy()
-        embeddings = torch.cat(embeddings).detach().cpu().to(self._dtype).numpy()
-        pooled_embeddings = (
-            torch.cat(pooled_embeddings).detach().cpu().to(self._dtype).numpy()
-        )
+        # TODO: Pad to max generation length
+        last_two_hidden_layers_pooled = np.concatenate(last_two_hidden_layers_pooled)
+        masks = np.concatenate(masks)
         # Return all data as a sequence of tuples for each environment:
-        return zip(cls_tokens, embeddings, pooled_embeddings)
+        return zip(last_two_hidden_layers_pooled, masks)
 
 
 class NonVisualObservationsGenerator:

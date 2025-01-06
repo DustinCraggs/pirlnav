@@ -35,6 +35,9 @@ python -u -m run \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name vc_1 \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path "/data/drive2/models/clip-vit-base-patch32" \
     POLICY.PVR_ENCODER.num_heads 4 \
+    POLICY.PVR_ENCODER.num_layers 2 \
+    POLICY.PVR_ENCODER.dropout 0.1 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "$PVR_DIR/ep_index.json" \
-    # DATASET.CONTENT_SCENES = "[*]" \
+    TASK_CONFIG.PVR.use_pvr_encoder True \
+    # TASK_CONFIG.PVR.use_fixed_size_embedding True \
     # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "temp/ep_index.json" \

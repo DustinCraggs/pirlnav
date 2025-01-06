@@ -4,6 +4,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+from collections import defaultdict
 from typing import Optional, Tuple
 
 import torch
@@ -68,6 +69,8 @@ class ILAgent(nn.Module):
             )
         self.device = next(actor_critic.parameters()).device
 
+        self.batch_store = defaultdict(list)
+
     def forward(self, *x):
         raise NotImplementedError
 
@@ -86,6 +89,8 @@ class ILAgent(nn.Module):
         cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction="none")
         hidden_states = []
 
+        num_correct_actions = 0.0
+
         for batch in data_generator:
 
             # Reshape to do in a single forward pass for all steps
@@ -100,6 +105,21 @@ class ILAgent(nn.Module):
             T = batch["actions"].shape[0] // N
             actions_batch = batch["actions"].view(T, N, -1)
             logits = logits.view(T, N, -1)
+
+            # directory = "temp/pvr_train_vs_eval/eval_demo"
+            # num_batches = 640
+            # self.batch_store["actions"].append(actions_batch)
+            # if len(self.batch_store["actions"]) == num_batches:
+            #     torch.save(
+            #         torch.cat(self.batch_store["actions"], dim=0),
+            #         f"{directory}/actions.pt",
+            #     )
+            #     exit()
+
+            selected_actions = logits.argmax(-1)
+            num_correct_actions += (
+                (selected_actions == actions_batch.squeeze(-1)).float().sum().item()
+            )
 
             action_loss = cross_entropy_loss(
                 logits.permute(0, 2, 1), actions_batch.squeeze(-1)
@@ -145,11 +165,14 @@ class ILAgent(nn.Module):
         total_entropy /= self.num_mini_batch
         total_action_loss /= self.num_mini_batch
 
+        accuracy = num_correct_actions / (self.num_mini_batch * T * N)
+
         return (
             total_loss_epoch,
             hidden_states,
             total_entropy,
             total_action_loss,
+            accuracy,
         )
 
     def apply_accumulated_gradients(self) -> None:

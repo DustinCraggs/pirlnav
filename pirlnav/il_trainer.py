@@ -77,7 +77,7 @@ class ILEnvDDPTrainer(PPOTrainer):
             config,
             get_env_class(config.ENV_NAME),
             workers_ignore_signals=is_slurm_batch_job(),
-            episode_index=sub_split_index,
+            # episode_index=sub_split_index,
             # shuffle_scenes=False,
         )
 
@@ -321,6 +321,7 @@ class ILEnvDDPTrainer(PPOTrainer):
             rnn_hidden_states,
             dist_entropy,
             actual_action_loss,
+            accuracy,
         ) = self.agent.update(self.rollouts, accumulate_gradients, num_accum_steps)
 
         num_updates = self.num_updates_done + 1
@@ -345,6 +346,7 @@ class ILEnvDDPTrainer(PPOTrainer):
             action_loss,
             dist_entropy,
             actual_action_loss,
+            accuracy,
         )
 
     @profiling_wrapper.RangeContext("train")
@@ -473,6 +475,7 @@ class ILEnvDDPTrainer(PPOTrainer):
                     action_loss,
                     dist_entropy,
                     actual_action_loss,
+                    accuracy,
                 ) = self._update_agent()
 
                 # With gradient accumulation, the weights may not have actually been
@@ -488,6 +491,7 @@ class ILEnvDDPTrainer(PPOTrainer):
                         action_loss=action_loss,
                         entropy=dist_entropy,
                         actual_action_loss=actual_action_loss,
+                        accuracy=accuracy,
                     ),
                     count_steps_delta,
                 )
@@ -523,11 +527,9 @@ class ILEnvDDPTrainer(PPOTrainer):
             self.num_steps_done,
         )
 
-        writer.add_scalar(
-            "lr",
-            self.lr_scheduler.get_last_lr()[0],
-            self.num_steps_done,
-        )
+        writer.add_scalar("lr", self.lr_scheduler.get_last_lr()[0], self.num_steps_done)
+
+        writer.add_scalar("num_updates", self.num_updates_done, self.num_steps_done)
 
         # Check to see if there are any metrics
         # that haven't been logged yet
