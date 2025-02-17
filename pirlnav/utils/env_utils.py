@@ -89,6 +89,8 @@ def generate_dataset_split_json(config: Config, output_path, stride) -> None:
 def filter_episodes(episodes, episode_index):
     keys = ["scene_id", "episode_id", "object_category"]
     episode_index = set([tuple(ep[k] for k in keys) for ep in episode_index])
+    scene_ids = set([ep[0] for ep in episode_index])
+    # print([(ep.episode_id, ep.object_category) for ep in episodes if ep.scene_id in scene_ids])
     return [
         ep
         for ep in episodes
@@ -120,11 +122,19 @@ def construct_envs(
     env_classes = [env_class for _ in range(num_environments)]
 
     dataset_config = config.TASK_CONFIG.DATASET
-    
+
     dataset = make_dataset(config.TASK_CONFIG.DATASET.TYPE)
     scenes = dataset_config.CONTENT_SCENES
     if "*" in dataset_config.CONTENT_SCENES:
         scenes = dataset.get_scenes_to_load(dataset_config)
+
+    if episode_index is not None:
+        # Filter any scenes that are not required for this episode_index to save
+        # time when loading envs:
+        ep_index_scenes = set(
+            [ep["scene_id"].split("/")[-1].split(".")[0] for ep in episode_index]
+        )
+        scenes = [scene for scene in scenes if scene in ep_index_scenes]
 
     if num_environments < 1:
         raise RuntimeError("NUM_ENVIRONMENTS must be strictly positive")

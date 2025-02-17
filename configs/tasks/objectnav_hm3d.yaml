@@ -79,16 +79,16 @@ SUB_SPLIT_GENERATOR:
   INDEX_PATH: null
 
 REPRESENTATION_GENERATOR:
-  data_generator:
-    name: clip
-    clip_kwargs:
-      model_path: "/data/drive2/models/clip-vit-base-patch32"
-      use_float16: True
-    cogvlm2_kwargs:
-      model_path: ""
-      use_float16: True
-    vc_1_kwargs:
-      use_float16: True
+  data_generators:
+    raw_image:
+    agent_state:
+    # clip:
+    #   model_path: "/data/drive2/models/clip-vit-base-patch32"
+    #   use_float16: True
+  data_storage:
+    name: "nomad"
+    output_path: /storage/dc/pvr_data/default
+
 
   output_zarr_path: /storage/dc/pvr_data/test/clip_data
   batch_chunk_size: 1000

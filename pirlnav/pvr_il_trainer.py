@@ -127,7 +127,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         # Not sure why these are set as discrete:
         # obs_space["inflection_weight"] = spaces.Discrete(1)
-        # obs_space["next_actions"] = spaces.Discrete(1)
+        obs_space["next_actions"] = spaces.Discrete(1)
         # obs_space["prev_actions"] = spaces.Discrete(1)
         obs_space["inflection_weight"] = spaces.Box(
             low=np.finfo(np.float32).min,
@@ -718,11 +718,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             None
         """
         # Add replay sensors
-        # self.config.defrost()
-        # self.config.TASK_CONFIG.TASK.SENSORS.extend(
-        #     ["DEMONSTRATION_SENSOR", "INFLECTION_WEIGHT_SENSOR"]
-        # )
-        # self.config.freeze()
+        self.config.defrost()
+        self.config.TASK_CONFIG.TASK.SENSORS.extend(
+            ["DEMONSTRATION_SENSOR", "INFLECTION_WEIGHT_SENSOR"]
+        )
+        self.config.freeze()
 
         profiler = SimpleProfiler()
         print(f"-------------- {checkpoint_path} --------------")
@@ -783,13 +783,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         policy_cfg = config.POLICY
         self._setup_actor_critic_agent(il_cfg)
 
-        if self.agent.actor_critic.should_load_agent_state:
-            self.agent.load_state_dict(
-                {
-                    k.replace("model.", "actor_critic."): v
-                    for k, v in ckpt_dict["state_dict"].items()
-                }
-            )
+        # if self.agent.actor_critic.should_load_agent_state:
+        #     self.agent.load_state_dict(
+        #         {
+        #             k.replace("model.", "actor_critic."): v
+        #             for k, v in ckpt_dict["state_dict"].items()
+        #         }
+        #     )
         self.actor_critic = self.agent.actor_critic
 
         observations = self.envs.reset()
@@ -884,9 +884,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 )
                 # print(actions)
                 # print(torch.tensor([[observations[0]["next_actions"]]]))
-                # prev_actions.copy_(torch.tensor([[observations[0]["next_actions"]]]))  # type: ignore
+
+                prev_actions.copy_(torch.tensor([[observations[0]["next_actions"]]]))  # type: ignore
                 # prev_actions.copy_(torch.tensor([[0]]))  # type: ignore
-                prev_actions.copy_(actions)  # type: ignore
+                # prev_actions.copy_(actions)  # type: ignore
 
             # NB: Move actions to CPU.  If CUDA tensors are
             # sent in to env.step(), that will create CUDA contexts
@@ -901,11 +902,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             else:
                 step_data = [a.item() for a in actions.to(device="cpu")]
 
-            # step_data = [observations[0]["next_actions"]]
+            step_data = [observations[0]["next_actions"]]
 
             profiler.exit("get_actions")
             profiler.enter("step_envs")
 
+            print(f"{self.envs.call_sim_at(0, 'get_agent_state')}")
             outputs = self.envs.step(step_data)
 
             profiler.exit("step_envs")
