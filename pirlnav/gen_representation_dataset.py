@@ -116,11 +116,12 @@ class ZarrDataStorage:
 
 class NomadDataStorage:
 
-    def __init__(self, output_path, num_workers=10, **kwargs):
+    def __init__(self, output_path, num_workers=20, **kwargs):
         self._output_path = output_path
         self._completed_eps = []
 
         self._pool = ProcessPoolExecutor(num_workers)
+        self._futures = []
 
     def save_episode(self, data, scene_id, episode_id, object_category):
         """
@@ -134,14 +135,15 @@ class NomadDataStorage:
         os.makedirs(save_dir, exist_ok=True)
 
         # Save the data:
-        self._pool.submit(
+        f = self._pool.submit(
             self._write_traj_data,
             save_dir,
-            data["rgb"],
+            np.array(data["rgb"]),
             np.array(data["agent_state"]),
             np.array(data["position"]),
             np.array(data["yaw"]),
         )
+        self._futures.append(f)
 
         # Update traj_names.txt. Write entire file every time in case there happens
         # to already be a file with the same name:
@@ -151,7 +153,8 @@ class NomadDataStorage:
             for ep in self._completed_eps:
                 f.write(f"{ep}\n")
 
-    def _write_traj_data(self, save_dir, rgb_data, agent_states, positions, yaws):
+    @staticmethod
+    def _write_traj_data(save_dir, rgb_data, agent_states, positions, yaws):
         os.makedirs(f"{save_dir}/images/", exist_ok=True)
 
         images = [Image.fromarray(arr) for arr in rgb_data]
