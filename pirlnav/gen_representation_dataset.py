@@ -2,6 +2,7 @@ from enum import Enum
 import json
 import os
 import pickle
+import time
 import types
 import einops
 import numpy as np
@@ -16,7 +17,11 @@ from PIL import Image
 from concurrent.futures import ProcessPoolExecutor
 
 from habitat_sim.utils.common import quat_to_magnum
-from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
+from pirlnav.utils.env_utils import (
+    construct_envs,
+    generate_dataset_split_json,
+    get_episodes,
+)
 from habitat.core.environments import get_env_class
 from habitat.core.vector_env import CURRENT_EPISODE_NAME
 
@@ -113,6 +118,9 @@ class ZarrDataStorage:
         ep_index_path = f"{self._output_zarr_path}/ep_index.json"
         json.dump(self._completed_eps, open(ep_index_path, "w"))
 
+    def close(self):
+        self._zarr_file.close()
+
 
 class NomadDataStorage:
 
@@ -187,6 +195,9 @@ class NomadDataStorage:
         plt.gca().set_aspect("equal", adjustable="box")
         plt.show()
 
+    def close(self):
+        self._pool.shutdown(wait=True)
+
 
 class RepresentationGenerator:
 
@@ -195,7 +206,9 @@ class RepresentationGenerator:
             "WARNING: If using a different NUM_ENVIRONMENTS when generating different "
             "datasets, the order of the episodes will be different."
         )
-        self._envs, self._remaining_ep_set = self._init_envs(config)
+        self._envs, self._remaining_episodes, self._remaining_ep_set = self._init_envs(
+            config
+        )
         self._num_envs = config["NUM_ENVIRONMENTS"]
 
         self._data_generators = get_data_generators(config)
@@ -212,7 +225,7 @@ class RepresentationGenerator:
         with open(sub_split_index_path, "r") as f:
             sub_split_index = json.load(f)
 
-        episodes = set(
+        episode_ids = set(
             [
                 (ep["scene_id"], ep["episode_id"], ep["object_category"])
                 for ep in sub_split_index
@@ -227,7 +240,9 @@ class RepresentationGenerator:
             episode_index=sub_split_index,
         )
 
-        return envs, episodes
+        episodes = get_episodes(config, sub_split_index)
+
+        return envs, episodes, episode_ids
 
     def generate(self):
         # TODO: With a stride of 10, one scene-goal pair is missing
@@ -236,6 +251,10 @@ class RepresentationGenerator:
 
         # Track the data for each episode separately:
         rollout_data = [[] for _ in range(self._num_envs)]
+
+        for i in range(self._num_envs):
+            next_ep = self._remaining_episodes.pop()
+            self._envs.call_at(i, "set_current_episode", {"episode": next_ep})
 
         actions = [None] * self._num_envs
         observations = self._envs.reset()
@@ -260,16 +279,12 @@ class RepresentationGenerator:
             outputs = self._envs.step(actions)
             observations, rewards, dones, infos = zip(*outputs)
 
-            step_data = self._generate_step(
-                actions, observations, rewards, dones, infos
-            )
-
             # If done, save the episode (the current obs is for the next ep):
             for i, ep in enumerate(rollout_data):
                 ep_metadata = previous_episodes[i]
-                done = dones[i]
 
-                if done:
+                if dones[i]:
+                    t0 = time.time()
                     # Check if this is a duplicate episode (i.e. an environment that
                     # cycled through all its eps):
                     ep_key = (
@@ -284,16 +299,38 @@ class RepresentationGenerator:
                         data = {k: np.stack([d[k] for d in ep]) for k in ep[0]}
                         self._data_storage.save_episode(data, *ep_key)
                         pbar.update(1)
+
+                        if len(self._remaining_ep_set) > 0:
+                            # Reset the env to the next episode:
+                            next_ep = self._remaining_episodes.pop()
+                            # Set the next episode manually, then reset (TODO: Is this
+                            # slow?):
+                            t_set = time.time()
+                            self._envs.call_at(
+                                i, "set_current_episode", {"episode": next_ep}
+                            )
+                            observations = list(observations)
+                            observations[i] = self._envs.call_at(i, "reset")
+                            previous_episodes[i] = next_ep
+                            print(f"Set time: {time.time() - t_set}")
                     else:
                         print(f"Duplicate episode {ep_key} (skipping)")
                     ep.clear()
+                    t1 = time.time()
                     # This env is now on a new ep, so update its metadata:
                     previous_episodes[i] = self._envs.call_at(i, CURRENT_EPISODE_NAME)
+                    print(f"get ep time {time.time() - t1}")
 
+                    print(f"Reset time: {time.time() - t0}")
+
+            step_data = self._generate_step(
+                actions, observations, rewards, dones, infos
+            )
             for ep, data in zip(rollout_data, step_data):
                 ep.append(data)
 
         pbar.close()
+        self._data_storage.close()
 
     def _generate_step(self, actions, observations, rewards, dones, infos):
         data = {}
