@@ -13,6 +13,7 @@ import requests
 import io
 
 from PIL import Image
+from concurrent.futures import ProcessPoolExecutor
 
 from habitat_sim.utils.common import quat_to_magnum
 from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
@@ -31,6 +32,7 @@ def generate_episode_split_index(config):
     stride = config["TASK_CONFIG"]["SUB_SPLIT_GENERATOR"]["STRIDE"]
     if os.path.dirname(output_path):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    # generate_dataset_split_json(config, output_path, stride, object_classes=["toilet"])
     generate_dataset_split_json(config, output_path, stride)
 
 
@@ -114,9 +116,11 @@ class ZarrDataStorage:
 
 class NomadDataStorage:
 
-    def __init__(self, output_path, **kwargs):
+    def __init__(self, output_path, num_workers=10, **kwargs):
         self._output_path = output_path
         self._completed_eps = []
+
+        self._pool = ProcessPoolExecutor(num_workers)
 
     def save_episode(self, data, scene_id, episode_id, object_category):
         """
@@ -124,50 +128,61 @@ class NomadDataStorage:
         expected by the NoMaD training code.
         """
         scene_id = scene_id.split("/")[-2]
-        save_dir = f"{self._output_path}/{scene_id}_{episode_id}_{object_category}"
-        image_dir = f"{save_dir}/images"
-        os.makedirs(image_dir, exist_ok=True)
+        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+        save_dir = f"{self._output_path}/{ep_id}"
 
-        images = [Image.fromarray(arr) for arr in data["rgb"]]
-        for i, img in enumerate(images):
-            img.save(f"{image_dir}/{i}.png")
+        os.makedirs(save_dir, exist_ok=True)
 
-        agent_states = np.array(data["agent_state"])
-        np.save(f"{save_dir}/agent_states.npy", agent_states)
-
-        # Traj data:
-        traj_data = {
-            "position": np.array(data["position"]),
-            "yaw": np.array(data["yaw"]),
-        }
-        pickle.dump(traj_data, open(f"{save_dir}/traj_data.pkl", "wb"))
-
-        positions = np.array(data["position"])
-        # Plot:
-        import matplotlib.pyplot as plt
-
-        # plt.plot(positions[:, 0], positions[:, 1], marker=".")
-        # # Plot yaws as arrows:
-        # for i, (pos, yaw) in enumerate(zip(positions[:], data["yaw"][:])):
-        #     plt.arrow(
-        #         pos[0],
-        #         pos[1],
-        #         0.1 * np.cos(yaw),
-        #         0.1 * np.sin(yaw),
-        #         width=0.01,
-        #         color="red",
-        #     )
-        # # Square axes:
-        # plt.gca().set_aspect("equal", adjustable="box")
-        # plt.show()
+        # Save the data:
+        self._pool.submit(
+            self._write_traj_data,
+            save_dir,
+            data["rgb"],
+            np.array(data["agent_state"]),
+            np.array(data["position"]),
+            np.array(data["yaw"]),
+        )
 
         # Update traj_names.txt. Write entire file every time in case there happens
         # to already be a file with the same name:
-        self._completed_eps.append(f"{scene_id}_{episode_id}_{object_category}")
+        self._completed_eps.append(f"{ep_id}")
         ep_index_path = f"{self._output_path}/traj_names.txt"
         with open(ep_index_path, "w") as f:
             for ep in self._completed_eps:
                 f.write(f"{ep}\n")
+
+    def _write_traj_data(self, save_dir, rgb_data, agent_states, positions, yaws):
+        os.makedirs(f"{save_dir}/images/", exist_ok=True)
+
+        images = [Image.fromarray(arr) for arr in rgb_data]
+        for i, img in enumerate(images):
+            img.save(f"{save_dir}/images/{i}.png")
+
+        np.save(f"{save_dir}/agent_states.npy", agent_states)
+
+        traj_data = {
+            "position": positions,
+            "yaw": yaws,
+        }
+        pickle.dump(traj_data, open(f"{save_dir}/traj_data.pkl", "wb"))
+
+    def plot_traj(positions, yaws):
+        import matplotlib.pyplot as plt
+
+        plt.plot(positions[:, 0], positions[:, 1], marker=".")
+        # Plot yaws as arrows:
+        for i, (pos, yaw) in enumerate(zip(positions[:], yaws[:])):
+            plt.arrow(
+                pos[0],
+                pos[1],
+                0.1 * np.cos(yaw),
+                0.1 * np.sin(yaw),
+                width=0.01,
+                color="red",
+            )
+        # Square axes:
+        plt.gca().set_aspect("equal", adjustable="box")
+        plt.show()
 
 
 class RepresentationGenerator:
