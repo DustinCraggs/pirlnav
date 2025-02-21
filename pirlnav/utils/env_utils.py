@@ -43,7 +43,9 @@ def get_num_unique(episodes):
     return len(set((ep.scene_id, ep.object_category) for ep in episodes))
 
 
-def generate_dataset_split_json(config: Config, output_path, stride) -> None:
+def generate_dataset_split_json(
+    config: Config, output_path, stride, object_classes=None
+) -> None:
     r"""Generate a dataset split json file for the given config and save it to the
     output path. This is useful for generating a dataset split json file for a
     dataset that is not natively supported by Habitat Lab.
@@ -59,9 +61,14 @@ def generate_dataset_split_json(config: Config, output_path, stride) -> None:
 
     episodes = dataset.episodes
     print(f"Total number of episodes before: {len(episodes)}")
+
     num_unique_pairs_before = get_num_unique(episodes)
     episodes.sort(key=lambda ep: (ep.scene_id, ep.object_category))
     episodes = episodes[::stride]
+
+    if object_classes is not None:
+        episodes = [ep for ep in episodes if ep.object_category in object_classes]
+
     num_unique_pairs_after = get_num_unique(episodes)
 
     print("Unique scene-object pairs:")
@@ -98,12 +105,20 @@ def filter_episodes(episodes, episode_index):
     ]
 
 
+def get_episodes(config: Config, episode_index=None):
+    dataset = make_dataset(config.TASK_CONFIG.DATASET.TYPE, config=config.TASK_CONFIG.DATASET)
+    if episode_index is not None:
+        dataset.episodes = filter_episodes(dataset.episodes, episode_index)
+    return dataset.episodes
+
+
 def construct_envs(
     config: Config,
     env_class: Union[Type[Env], Type[RLEnv]],
     workers_ignore_signals: bool = False,
     shuffle_scenes: bool = True,
     episode_index=None,
+    load_all_scenes: bool = False,
 ) -> VectorEnv:
     r"""Create VectorEnv object with specified config and env class type.
     To allow better performance, dataset are split into small ones for
@@ -149,10 +164,11 @@ def construct_envs(
         random.shuffle(scenes)
 
     scene_splits: List[List[str]] = [[] for _ in range(num_environments)]
-    if len(scenes) < num_environments:
+    if len(scenes) < num_environments or load_all_scenes:
         logger.warn(
-            f"There are less scenes ({len(scenes)}) than environments ({num_environments})"
-            "Each environment will use all the scenes instead of using a subset. "
+            f"There are fewer scenes ({len(scenes)}) than environments"
+            f"({num_environments}) or load_all_scenes is True. Each environment will "
+            f"use all the scenes instead of using a subset. "
         )
         for scene in scenes:
             for split in scene_splits:

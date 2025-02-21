@@ -7,9 +7,9 @@ sub_split_path=$2
 output_dir=$3
 clip_model_path=None
 # clip_model_path="/data/drive2/models/clip-vit-base-patch32"
-cogvlm2_model_path="/storage/dc/models/vlm/cogvlm2-llama3-chat-19B-int4/"
+# cogvlm2_model_path="/storage/dc/models/vlm/cogvlm2-llama3-chat-19B-int4/"
 
-bc_dataset_path="$1/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd/{split}/{split}.json.gz"
+bc_dataset_path="$data_dir/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd/{split}/{split}.json.gz"
 
 python run.py \
     --run-type gen \
