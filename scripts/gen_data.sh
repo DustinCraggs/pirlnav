@@ -16,9 +16,11 @@ python run.py \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $bc_dataset_path \
     NUM_ENVIRONMENTS 20 \
+    TASK_CONFIG.SIMULATOR.ACTION_SPACE_CONFIG "v1_no_op_look" \
     TASK_CONFIG.REPRESENTATION_GENERATOR.batch_chunk_size 1000 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_storage.output_path $output_dir \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.skip_non_movement_actions True \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path $clip_model_path \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.cogvlm2_kwargs.model_path $cogvlm2_model_path \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name cogvlm2 \

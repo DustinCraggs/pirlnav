@@ -79,6 +79,7 @@ SUB_SPLIT_GENERATOR:
   INDEX_PATH: null
 
 REPRESENTATION_GENERATOR:
+  skip_non_movement_actions: False
   data_generators:
     raw_image:
     agent_state:

@@ -1,4 +1,3 @@
-from enum import Enum
 import json
 import os
 import pickle
@@ -11,18 +10,23 @@ import zarr
 import tqdm
 import requests
 import io
+import habitat_sim
 
-from PIL import Image
+
+from enum import Enum
 from concurrent.futures import ProcessPoolExecutor
 
 from habitat_sim.utils.common import quat_to_magnum
+from habitat.sims.habitat_simulator.actions import HabitatSimV0ActionSpaceConfiguration
 from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
 from habitat.core.environments import get_env_class
 from habitat.core.vector_env import CURRENT_EPISODE_NAME
+from habitat.core.registry import registry
 
 from vc_models.models.vit import model_utils, vit
 from scipy.spatial.transform import Rotation
 from transformers import CLIPVisionModel, AutoProcessor
+from PIL import Image
 
 # TODO: Change generator to return dict of tensors
 
@@ -67,14 +71,41 @@ def get_data_storage(config):
     return storage_registry[storage_config["name"]](output_path, **storage_kwargs)
 
 
+@registry.register_action_space_configuration(name="v1_no_op_look")
+class NoLookActionSpaceConfiguration(HabitatSimV0ActionSpaceConfiguration):
+    def get(self):
+        config = super().get()
+        new_config = {
+            4: habitat_sim.ActionSpec(
+                "look_up",
+                habitat_sim.ActuationSpec(amount=0),
+            ),
+            5: habitat_sim.ActionSpec(
+                "look_down",
+                habitat_sim.ActuationSpec(amount=0),
+            ),
+        }
+
+        config.update(new_config)
+
+        return config
+
+
 class ZarrDataStorage:
 
-    def __init__(self, output_path, batch_chunk_size=1000, **kwargs):
+    def __init__(self, output_path, episodes, batch_chunk_size=1000, **kwargs):
         self._output_path = output_path
         self._batch_chunk_size = batch_chunk_size
 
         self._zarr_file = None
         self._completed_eps = []
+
+        # The episode index maps the scene_id, episode_id, and object category to the
+        # row in the zarr file:
+        # TODO: Need to pre-calc ep lengths
+        self.episode_index = {
+
+        }
 
     def _init_zarr_file(self, data):
         self._zarr_file = zarr.open(self._output_path, mode="w")
@@ -113,12 +144,18 @@ class ZarrDataStorage:
         ep_index_path = f"{self._output_zarr_path}/ep_index.json"
         json.dump(self._completed_eps, open(ep_index_path, "w"))
 
+    def close(self):
+        self._zarr_file.close()
+
 
 class NomadDataStorage:
 
-    def __init__(self, output_path, num_workers=20, **kwargs):
+    def __init__(
+        self, output_path, episodes, num_workers=20, save_waypoint_plot=False, **kwargs
+    ):
         self._output_path = output_path
         self._completed_eps = []
+        self._save_waypoint_plot = save_waypoint_plot
 
         self._pool = ProcessPoolExecutor(num_workers)
         self._futures = []
@@ -134,14 +171,17 @@ class NomadDataStorage:
 
         os.makedirs(save_dir, exist_ok=True)
 
+        positions = data["position"]
+        yaws = data["yaw"]
+
         # Save the data:
         f = self._pool.submit(
             self._write_traj_data,
             save_dir,
             np.array(data["rgb"]),
             np.array(data["agent_state"]),
-            np.array(data["position"]),
-            np.array(data["yaw"]),
+            positions,
+            yaws,
         )
         self._futures.append(f)
 
@@ -152,6 +192,9 @@ class NomadDataStorage:
         with open(ep_index_path, "w") as f:
             for ep in self._completed_eps:
                 f.write(f"{ep}\n")
+
+        if self._save_waypoint_plot:
+            self.plot_traj(save_dir, positions, yaws)
 
     @staticmethod
     def _write_traj_data(save_dir, rgb_data, agent_states, positions, yaws):
@@ -169,8 +212,12 @@ class NomadDataStorage:
         }
         pickle.dump(traj_data, open(f"{save_dir}/traj_data.pkl", "wb"))
 
-    def plot_traj(positions, yaws):
+    @staticmethod
+    def plot_traj(save_dir, positions, yaws):
         import matplotlib.pyplot as plt
+
+        fig = plt.gcf()
+        fig.set_size_inches(20, 20)
 
         plt.plot(positions[:, 0], positions[:, 1], marker=".")
         # Plot yaws as arrows:
@@ -180,12 +227,24 @@ class NomadDataStorage:
                 pos[1],
                 0.1 * np.cos(yaw),
                 0.1 * np.sin(yaw),
-                width=0.01,
+                width=0.005,
                 color="red",
             )
+
+        # Plot initial and final position in green:
+        plt.plot(positions[0, 0], positions[0, 1], marker="o", color="green")
+        plt.plot(positions[-1, 0], positions[-1, 1], marker="o", color="orange")
+
         # Square axes:
         plt.gca().set_aspect("equal", adjustable="box")
-        plt.show()
+        # plt.show()
+        plt.savefig(f"{save_dir}/waypoints.png", dpi=300)
+        plt.close()
+
+    def close(self):
+        for f in self._futures:
+            f.result()
+        self._pool.shutdown()
 
 
 class RepresentationGenerator:
@@ -199,7 +258,11 @@ class RepresentationGenerator:
         self._num_envs = config["NUM_ENVIRONMENTS"]
 
         self._data_generators = get_data_generators(config)
-        self._data_storage = get_data_storage(config)
+        self._data_storage = get_data_storage(config, episodes=self._remaining_ep_set)
+
+        self._skip_non_movement_actions = config["TASK_CONFIG"][
+            "REPRESENTATION_GENERATOR"
+        ]["skip_non_movement_actions"]
 
     def _init_envs(self, config):
         config.defrost()
@@ -242,13 +305,17 @@ class RepresentationGenerator:
         rewards = [0.0] * self._num_envs
         # Done is true on the first step of each episode (non-standard convention):
         dones = [True] * self._num_envs
+        should_skips = [False] * self._num_envs
 
         # Track the episode info to deduplicate episodes from cycling environments:
         previous_episodes = self._envs.current_episodes()
         print(
-            f"{previous_episodes[0].scene_id}, {previous_episodes[0].episode_id}, {previous_episodes[0].object_category}"
+            f"{previous_episodes[0].scene_id}, {previous_episodes[0].episode_id}, "
+            f"{previous_episodes[0].object_category}"
         )
-        step_data = self._generate_step(actions, observations, rewards, dones, None)
+        step_data = self._generate_step(
+            actions, observations, rewards, dones, None, should_skips
+        )
         for ep, data in zip(rollout_data, step_data):
             ep.append(data)
 
@@ -257,11 +324,19 @@ class RepresentationGenerator:
             # "next_actions" contains the actions from the BC dataset:
             actions = [o["next_actions"] for o in observations]
 
+            prev_obs = observations
+            # TODO: Manually pick look up and look down actions to ensure they're
+            # no-ops:
             outputs = self._envs.step(actions)
             observations, rewards, dones, infos = zip(*outputs)
 
+            should_skips = [
+                self._should_skip(actions[i], prev_obs[i], dones[i], observations[i])
+                for i in range(self._num_envs)
+            ]
+
             step_data = self._generate_step(
-                actions, observations, rewards, dones, infos
+                actions, observations, rewards, dones, infos, should_skips
             )
 
             # If done, save the episode (the current obs is for the next ep):
@@ -290,16 +365,20 @@ class RepresentationGenerator:
                     # This env is now on a new ep, so update its metadata:
                     previous_episodes[i] = self._envs.call_at(i, CURRENT_EPISODE_NAME)
 
-            for ep, data in zip(rollout_data, step_data):
-                ep.append(data)
+            for ep, data, should_skip in zip(rollout_data, step_data, should_skips):
+                if not should_skip:
+                    ep.append(data)
 
         pbar.close()
+        self._data_storage.close()
 
-    def _generate_step(self, actions, observations, rewards, dones, infos):
+    def _generate_step(
+        self, actions, observations, rewards, dones, infos, skipped_last
+    ):
         data = {}
         for data_generator in self._data_generators:
             output = data_generator.generate(
-                actions, observations, rewards, dones, infos, self._envs
+                actions, observations, rewards, dones, infos, self._envs, skipped_last
             )
             data.update(output)
         ep_data = [
@@ -308,6 +387,23 @@ class RepresentationGenerator:
         ]
         return ep_data
 
+    def _should_skip(self, prev_action, prev_obs, prev_done, obs):
+        if not self._skip_non_movement_actions:
+            return False
+
+        # Never skip the first step:
+        if prev_done:
+            return False
+
+        # Skip look actions:
+        prev_action = HabitatSimActions(prev_action)
+        if prev_action in [HabitatSimActions.LOOK_DOWN, HabitatSimActions.LOOK_UP]:
+            return True
+
+        # Skip if the agent didn't move:
+        move_distance = np.linalg.norm(prev_obs["gps"] - obs["gps"])
+        return prev_action == HabitatSimActions.MOVE_FORWARD and move_distance < 0.1
+
 
 class RawImageGenerator:
 
@@ -315,7 +411,9 @@ class RawImageGenerator:
         self.data_names = ["rgb"]
 
     @torch.no_grad()
-    def generate(self, actions, observations, rewards, dones, infos, envs):
+    def generate(
+        self, actions, observations, rewards, dones, infos, envs, skipped_last
+    ):
         return {"rgb": [o["rgb"] for o in observations]}
 
 
@@ -346,7 +444,15 @@ class ClipGenerator:
 
     @torch.no_grad()
     def generate(
-        self, actions, observations, rewards, dones, infos, envs, return_tensors=False
+        self,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+        return_tensors=False,
     ):
         images = [Image.fromarray(o["rgb"]) for o in observations]
 
@@ -409,7 +515,15 @@ class Vc1Generator:
 
     @torch.no_grad()
     def generate(
-        self, actions, observations, rewards, dones, infos, envs, return_tensors=False
+        self,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+        return_tensors=False,
     ):
         # images = [o["rgb"].swapaxes(0, -1).astype(np.float32) for o in observations]
         # print([img.shape for img in images])
@@ -517,7 +631,15 @@ class CogVlmGenerator:
 
     @torch.no_grad()
     def generate(
-        self, actions, observations, rewards, dones, infos, envs, return_tensors=False
+        self,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+        return_tensors=False,
     ):
         images = [Image.fromarray(o["rgb"]) for o in observations]
 
@@ -568,7 +690,9 @@ class NonVisualObservationsGenerator:
             "done",
         ]
 
-    def generate(self, actions, observations, rewards, dones, infos, envs):
+    def generate(
+        self, actions, observations, rewards, dones, infos, envs, skipped_last
+    ):
         data = {k: [obs[k] for obs in observations] for k in self._obs_keys}
         data["reward"] = rewards
         data["done"] = dones
@@ -586,30 +710,50 @@ class HabitatSimActions(Enum):
 
 class AgentStateGenerator:
 
-    def __init__(self, **kwargs):
+    def __init__(self, remove_non_movement_actions=True, **kwargs):
+        """
+        remove_non_movement_actions: If True, remove non-movement actions from the
+        dataset (except stop action) by returning None.
+        """
         self.data_names = ["agent_state", "position", "yaw"]
 
-        self.prev_positions = None
+        self.remove_non_movement_actions = remove_non_movement_actions
+        # Track the previous output positions. These are different to the sim agent
+        # states, as rotations are only converted to small movements for the output
+        # positions:
+        self.prev_output_positions = None
 
-    def generate(self, actions, observations, rewards, dones, infos, envs):
+    def generate(
+        self, prev_actions, observations, rewards, dones, infos, envs, skipped_last
+    ):
         num_envs = len(observations)
         agent_states = [envs.call_sim_at(i, "get_agent_state") for i in range(num_envs)]
 
         positions, yaws = zip(*[state_to_traj_sample(state) for state in agent_states])
+        positions = [np.array(pos) for pos in positions]
+        yaws = list(yaws)
 
-        # positions = [pos_to_2d(state.position) for state in agent_states]
-        # yaws = [quat_to_yaw(state.rotation) for state in agent_states]
+        if self.prev_output_positions is None:
+            self.prev_output_positions = positions
 
-        if self.prev_positions is not None:
-            positions = [
-                convert_rotation_to_small_movement(
-                    action, current_pos, prev_pos, yaw_after
-                )
-                for action, current_pos, prev_pos, yaw_after in zip(
-                    actions, positions, self.prev_positions, yaws
-                )
-            ]
-        self.prev_positions = positions
+        prev_actions = [
+            HabitatSimActions(a) if a is not None else None for a in prev_actions
+        ]
+
+        for i in range(num_envs):
+            positions[i] = convert_rotation_to_small_movement(
+                dones[i],
+                prev_actions[i],
+                self.prev_output_positions[i],
+                positions[i],
+                yaws[i],
+            )
+
+        # self.prev_output_positions = list(positions)
+        self.prev_output_positions = [
+            positions[i] if not skipped_last[i] else self.prev_output_positions[i]
+            for i in range(num_envs)
+        ]
 
         return {
             "agent_state": agent_states,
@@ -628,26 +772,48 @@ def data_dict_to_batched_tensors(data_dict):
 
 
 def convert_rotation_to_small_movement(
-    action, current_pos, prev_pos, yaw_after, movement_size=0.05
+    done, prev_action, prev_output_pos, pos, yaw, movement_size=0.025
 ):
-    action = HabitatSimActions(action)
-    is_rotation = action in [HabitatSimActions.TURN_LEFT, HabitatSimActions.TURN_RIGHT]
+    # The "output_pos" is different to the true position in the sim, because we don't
+    # actually apply the small movements in the sim. Need to move relative to the output
+    # pos to "point" in the right direction.
+    # TODO: We could apply the small movements in the sim, but then we would have to
+    # assess the impact of collisions
+    is_rotation = prev_action in [
+        HabitatSimActions.TURN_LEFT,
+        HabitatSimActions.TURN_RIGHT,
+    ]
 
-    if not is_rotation:
-        return current_pos
+    # Done is true on the first step of an episode. In this case, prev_action is for
+    # the previous episode, so no need to apply rotation in this case:
+    if done or not is_rotation:
+        return pos
 
-    movement = movement_size * np.array([np.cos(yaw_after), np.sin(yaw_after)])
-    return prev_pos + movement
+    movement = movement_size * np.array([np.cos(yaw), np.sin(yaw)])
+    return prev_output_pos + movement
 
 
-def pos_to_2d(pos):
-    """
-    Agent state coordinate system: x-right, y-up, z-backward
+# def convert_rotation_to_small_movement(
+#     action, current_pos, prev_pos, yaw_after, movement_size=0.05
+# ):
+#     action = HabitatSimActions(action)
+#     is_rotation = action in [HabitatSimActions.TURN_LEFT, HabitatSimActions.TURN_RIGHT]
 
-    NoMaD expects: x-forward, y-right
-    """
-    # Convert -z to x, x to y:
-    return np.array([-pos[2], pos[0]])
+#     if not is_rotation:
+#         return current_pos
+
+#     movement = movement_size * np.array([np.cos(yaw_after), np.sin(yaw_after)])
+#     return prev_pos + movement
+
+
+# def pos_to_2d(pos):
+#     """
+#     Agent state coordinate system: x-right, y-up, z-backward
+
+#     NoMaD expects: x-forward, y-right
+#     """
+#     # Convert -z to x, x to y:
+#     return np.array([-pos[2], pos[0]])
 
 
 # Quaternion utils from sg_habitat:
@@ -698,14 +864,14 @@ def state_to_traj_sample(state):
     return position, yaw
 
 
-def quat_to_yaw(quat):
-    """
-    Agent state coordinate system: x-right, y-up, z-backward
+# def quat_to_yaw(quat):
+#     """
+#     Agent state coordinate system: x-right, y-up, z-backward
 
-    NoMaD expects: x-forward, y-right
-    """
-    hab_z_negative_yaw = quat_hab_to_euler(quat)[1]
-    # Flip across NoMaD x-axis:
-    return (np.pi - np.abs(hab_z_negative_yaw)) * -np.sign(hab_z_negative_yaw)
-    # R_init = np.array(quat_to_magnum(quat).to_matrix())
-    # return -np.arctan2(R_init[0,2], R_init[2,2])
+#     NoMaD expects: x-forward, y-right
+#     """
+#     hab_z_negative_yaw = quat_hab_to_euler(quat)[1]
+#     # Flip across NoMaD x-axis:
+#     return (np.pi - np.abs(hab_z_negative_yaw)) * -np.sign(hab_z_negative_yaw)
+#     # R_init = np.array(quat_to_magnum(quat).to_matrix())
+#     # return -np.arctan2(R_init[0,2], R_init[2,2])
