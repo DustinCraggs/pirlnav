@@ -49,7 +49,7 @@ class PvrEncoder(nn.Module):
             torch.Tensor: Embedded tokens of shape
                 (batch, pvr_seq_len + nv_seq_len + 1, embed_dim)
         """
-        # print(f"pvr_tokens initial {pvr_tokens.shape}")
+
         # Concatenate PVR tokens. This could be across layers of the PVR transformer,
         # or across the image patch dimensions:
         pvr_tokens = einops.rearrange(
@@ -59,8 +59,6 @@ class PvrEncoder(nn.Module):
             torch.zeros((pvr_tokens.size(0), 1), dtype=int).to(pvr_tokens.device)
         )
         # act_token = self.act_token.expand(pvr_tokens.size(0), -1, -1)
-        # print(f"pvr_tokens {pvr_tokens.shape}")
-        # print(f"act_token {act_token.shape}")
 
         if non_visual_tokens is None:
             seq = torch.cat([pvr_tokens, act_token], dim=1)
@@ -69,11 +67,5 @@ class PvrEncoder(nn.Module):
             seq = torch.cat([pvr_tokens, non_visual_tokens, act_token], dim=1)
 
         # Only return last token, as this is the ACT token:
-        # print(f"seq {seq.shape}")
         output = self.encoder(seq)
-        # print(f"output shape {output.shape}")
-        # print(f"output {output}")
-        # print(f"output final {output[:, -1, :]}")
-        # print(f"output final shape {output[:, -1, :].shape}")
         return output[:, -1, :]
-        # return self.encoder(seq)[:, -1, :]

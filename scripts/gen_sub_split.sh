@@ -4,6 +4,7 @@ export HABITAT_SIM_LOG=quiet
 
 DATA_DIR=$1
 OUTPUT_JSON_PATH=$2
+STRIDE=$3
 
 # BC_DATASET_PATH="$DATA_DIR/tasks/objectnav_hm3d_v1/{split}/{split}.json.gz"
 BC_DATASET_PATH="$DATA_DIR/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd/{split}/{split}.json.gz"
@@ -13,7 +14,7 @@ CUDA_VISIBLE_DEVICES=1 python run.py \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $BC_DATASET_PATH \
     TASK_CONFIG.SUB_SPLIT_GENERATOR.INDEX_PATH $OUTPUT_JSON_PATH \
-    TASK_CONFIG.SUB_SPLIT_GENERATOR.STRIDE 1 \
+    TASK_CONFIG.SUB_SPLIT_GENERATOR.STRIDE $STRIDE \
     # EVAL.SPLIT "val" \
     # TASK_CONFIG.DATASET.SPLIT "val" \
     # TASK_CONFIG.DATASET.TYPE "ObjectNav-v1" \

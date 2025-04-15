@@ -22,10 +22,10 @@ python -u -m run \
     --exp-config $config \
     --run-type eval \
     EVAL_CKPT_PATH_DIR $EVAL_CHECKPOINT_DIR \
-    VIDEO_DIR "$DATA_DIR/videos/$1/" \
     WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
     WB.MODE online \
+    VIDEO_DIR "$DATA_DIR/videos/$GROUP_NAME/$EXP_NAME" \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \
     NUM_ENVIRONMENTS 20 \
@@ -34,16 +34,20 @@ python -u -m run \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
     TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path None \
     POLICY.PVR_ENCODER.num_heads 4 \
     POLICY.PVR_ENCODER.num_layers 2 \
     POLICY.PVR_ENCODER.dropout 0.1 \
     POLICY.SEQ2SEQ.use_prev_action True \
     TASK_CONFIG.PVR.use_pvr_encoder True \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
+    # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path None \
     # TASK_CONFIG.PVR.use_fixed_size_embedding True \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path "/data/drive2/models/clip-vit-base-patch32" \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
     # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "$DATA_DIR/pvr_demos/ten_percent/ep_index.json" \
 
     # POLICY.RGB_ENCODER.augmentations_name "" \
+
+# MAIN_PORT=8740 CUDA_VISIBLE_DEVICES=1 ./scripts/eval_train.sh data /storage/dc/pvr_data/one_ep ../data/checkpoints/objectnav_il/pirlnav_test/ckpt.0.pth pirlnav_il_1pc_3_ckpt_2_train one_percent_eval
+# MAIN_PORT=8741 CUDA_VISIBLE_DEVICES=1 ./scripts/pvr_il_eval_train.sh data /storage/dc/pvr_data/ten_percent/ ../data/checkpoints/objectnav_il/pvr_clip_ten_percent_heads_4_long_4/ckpt.2.pth test_video_2 test_video_2
+# MAIN_PORT=8741 CUDA_VISIBLE_DEVICES=1 ./scripts/pvr_il_eval_train.sh data /storage/dc/pvr_data/stretch_like/twenty_percent/clip_non_visual_movement_only/ /storage/dc/pvr_data/stretch_like/twenty_percent/clip_non_visual_movement_only/ data/checkpoints/objectnav_il/clip_no_pose_3/ckpt.19.pth stretch_20pc clip_no_gps_no_compass

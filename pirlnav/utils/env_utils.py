@@ -45,14 +45,7 @@ def get_num_unique(episodes):
 
 def generate_dataset_split_json(
     config: Config, output_path, stride, object_classes=None
-) -> None:
-    r"""Generate a dataset split json file for the given config and save it to the
-    output path. This is useful for generating a dataset split json file for a
-    dataset that is not natively supported by Habitat Lab.
-
-    :param config: Config object that contains the dataset information.
-    :param output_path: Path to save the dataset split json file.
-    """
+):
     dataset_config = config.TASK_CONFIG.DATASET
     dataset = make_dataset(dataset_config.TYPE, config=dataset_config)
     scenes = dataset_config.CONTENT_SCENES
@@ -77,17 +70,23 @@ def generate_dataset_split_json(
 
     # TODO: Shuffle object categories? Shuffle all then sort by scene again. Contiguous
     # scenes will improve performance.
+    # Length is len(ep.reference_replay) - 1 because as far as I understand the replay
+    # has an initial action that is never used.
     episode_ids = [
         {
             "scene_id": ep.scene_id,
             "episode_id": ep.episode_id,
             "object_category": ep.object_category,
+            "length": len(ep.reference_replay) - 1,
         }
         for ep in episodes
     ]
 
     print(f"Total number of episodes: {len(episode_ids)}")
-    print(f"Number of scenes: {len(scenes)}")
+    print(f"Number of scenes: {len(set(ep['scene_id'] for ep in episode_ids))}")
+    print(
+        f"Number of object categories: {len(set(ep['object_category'] for ep in episode_ids))}"
+    )
 
     with open(output_path, "w") as f:
         json.dump(episode_ids, f)
@@ -106,7 +105,9 @@ def filter_episodes(episodes, episode_index):
 
 
 def get_episodes(config: Config, episode_index=None):
-    dataset = make_dataset(config.TASK_CONFIG.DATASET.TYPE, config=config.TASK_CONFIG.DATASET)
+    dataset = make_dataset(
+        config.TASK_CONFIG.DATASET.TYPE, config=config.TASK_CONFIG.DATASET
+    )
     if episode_index is not None:
         dataset.episodes = filter_episodes(dataset.episodes, episode_index)
     return dataset.episodes

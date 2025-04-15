@@ -217,12 +217,15 @@ class ObjectNavILMAENet(Net):
 
         if EpisodicGPSSensor.cls_uuid in observations:
             obs_gps = observations[EpisodicGPSSensor.cls_uuid]
+            print(f"obs_gps {obs_gps}")
+
             if len(obs_gps.size()) == 3:
                 obs_gps = obs_gps.contiguous().view(-1, obs_gps.size(2))
             x.append(self.gps_embedding(obs_gps))
 
         if EpisodicCompassSensor.cls_uuid in observations:
             obs_compass = observations["compass"]
+            print(f"obs_compass {obs_compass}")
             if len(obs_compass.size()) == 3:
                 obs_compass = obs_compass.contiguous().view(-1, obs_compass.size(2))
             compass_observations = torch.stack(
@@ -244,6 +247,7 @@ class ObjectNavILMAENet(Net):
             x.append(self.obj_categories_embedding(object_goal).squeeze(dim=1))
 
         if self.policy_config.SEQ2SEQ.use_prev_action:
+            print(f"prev_actions {prev_actions}")
             prev_actions_embedding = self.prev_action_embedding(
                 ((prev_actions.float() + 1) * masks).long().view(-1)
             )
@@ -256,6 +260,7 @@ class ObjectNavILMAENet(Net):
                 # Remove extra dimensions that exist to match sequential PVRs:
                 x.append(observations[k].squeeze(1).squeeze(1))
         elif self.use_pvr_encoder:
+
             # nv_obs = torch.cat(x, dim=1)
             # nv_tokens = self.non_visual_embedding(nv_obs).unsqueeze(1)
             nv_tokens = None
@@ -264,7 +269,9 @@ class ObjectNavILMAENet(Net):
             # TODO: For multi-PVR, use single encoder and project to same
             # dimensionality?
             pvr_tokens = torch.cat([observations[k] for k in self.pvr_obs_keys])
+            print(f"pvr_tokens.shape {pvr_tokens.shape}")
             # print(f"PVR TOKENS SHAPE {pvr_tokens.shape}")
+            print(f"pvr {pvr_tokens.shape}")
             pvr_embedding = self.pvr_encoder(pvr_tokens, nv_tokens)
             x.append(pvr_embedding)
         elif self.visual_encoder is not None:

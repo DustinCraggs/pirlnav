@@ -24,10 +24,16 @@ SIMULATOR:
     HFOV: 79
     POSITION: [0, 0.88, 0]
   RGB_SENSOR:
-    WIDTH: 640
-    HEIGHT: 480
-    HFOV: 79
-    POSITION: [0, 0.88, 0]
+    # WIDTH: 640
+    # HEIGHT: 480
+    # HFOV: 79
+    # POSITION: [0, 0.88, 0]
+    # Stretch-like
+    WIDTH: 450
+    HEIGHT: 600
+    HFOV: 90
+    POSITION: [0, 1.3, 0]
+    ORIENTATION: [-0.35, 0, 0]
   DEPTH_SENSOR:
     WIDTH: 640
     HEIGHT: 480
@@ -41,8 +47,8 @@ TASK:
   POSSIBLE_ACTIONS: ["STOP", "MOVE_FORWARD", "TURN_LEFT", "TURN_RIGHT", "LOOK_UP", "LOOK_DOWN"]
   SUCCESS_DISTANCE: 0.1
 
-  # SENSORS: ['OBJECTGOAL_SENSOR']
-  SENSORS: ['OBJECTGOAL_SENSOR', 'COMPASS_SENSOR', 'GPS_SENSOR']
+  SENSORS: ['OBJECTGOAL_SENSOR']
+  # SENSORS: ['OBJECTGOAL_SENSOR', 'COMPASS_SENSOR', 'GPS_SENSOR']
   GOAL_SENSOR_UUID: objectgoal
   
   DEMONSTRATION_SENSOR:
@@ -81,18 +87,21 @@ SUB_SPLIT_GENERATOR:
 REPRESENTATION_GENERATOR:
   skip_non_movement_actions: False
   data_generators:
-    raw_image:
-    agent_state:
-    # clip:
-    #   model_path: "/data/drive2/models/clip-vit-base-patch32"
-    #   use_float16: True
+    # raw_image:
+    # agent_state:
+    # non_visual:
+    clip:
+      use_float16: True
+      # model_path: "/data/drive2/models/clip-vit-base-patch32"
   data_storage:
-    name: "nomad"
     output_path: /storage/dc/pvr_data/default
+    # Zarr:
+    name: "zarr"
+    kwargs:
+      batch_chunk_size: 1000
+    # NoMaD:
+    # name: "nomad"
 
-
-  output_zarr_path: /storage/dc/pvr_data/test/clip_data
-  batch_chunk_size: 1000
 
 PVR:
   use_pvr_encoder: False
@@ -103,10 +112,10 @@ PVR:
   # pvr_keys: ["rgb"]
   # pvr_keys: ["last_hidden_layer_pooled", "cls"]
   pvr_keys: ["last_two_hidden_layers"]
-  # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
-  non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
+  non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
+  # non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "cls"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
-  # obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
+  obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_hidden_layer_pooled", "cls"]
-  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]

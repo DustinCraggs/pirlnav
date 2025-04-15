@@ -58,7 +58,7 @@ def get_data_generators(config):
     ]
 
 
-def get_data_storage(config):
+def get_data_storage(config, episodes):
     storage_registry = {
         "zarr": ZarrDataStorage,
         "nomad": NomadDataStorage,
@@ -68,7 +68,9 @@ def get_data_storage(config):
     storage_kwargs = storage_config.get("kwargs", {})
 
     output_path = storage_config["output_path"]
-    return storage_registry[storage_config["name"]](output_path, **storage_kwargs)
+    return storage_registry[storage_config["name"]](
+        output_path, episodes, **storage_kwargs
+    )
 
 
 @registry.register_action_space_configuration(name="v1_no_op_look")
@@ -102,10 +104,21 @@ class ZarrDataStorage:
 
         # The episode index maps the scene_id, episode_id, and object category to the
         # row in the zarr file:
-        # TODO: Need to pre-calc ep lengths
-        self.episode_index = {
+        lengths = [ep["length"] for ep in episodes]
+        cumulative_lengths = np.cumsum([0, *lengths])
 
+        self._total_length = cumulative_lengths[-1]
+        self._episode_index = {
+            (ep["scene_id"], ep["episode_id"], ep["object_category"]): (
+                row,
+                ep["length"],
+            )
+            for ep, row in zip(episodes, cumulative_lengths)
         }
+
+        print(f"Num eps {len(episodes)}")
+        print(f"Total length {self._total_length}")
+        print(f"Index {self._episode_index}")
 
     def _init_zarr_file(self, data):
         self._zarr_file = zarr.open(self._output_path, mode="w")
@@ -116,19 +129,30 @@ class ZarrDataStorage:
         for key, data_array in data.items():
             chunks = [None] * len(data_array.shape)
             chunks[0] = self._batch_chunk_size
-            self._data_group[key] = zarr.array(data_array, chunks=chunks)
+            # self._data_group[key] = zarr.array(data_array, chunks=chunks)
+            self._data_group[key] = zarr.create(
+                shape=(self._total_length, *data_array.shape[1:]),
+                dtype=data_array.dtype,
+                chunks=chunks,
+            )
 
     def save_episode(self, data, scene_id, episode_id, object_category):
+        row, expected_length = self._episode_index[
+            (scene_id, episode_id, object_category)
+        ]
+
+        data_length = data[next(iter(data.keys()))].shape[0]
+        assert (
+            data_length == expected_length
+        ), f"Episode length mismatch. Expected: {expected_length}, got: {data_length}"
+
         if self._zarr_file is None:
-            # First episode starts at row 0:
-            row = 0
             # Create the zarr file and groups and save the data:
             self._init_zarr_file(data)
-        else:
-            row = self._data_group[next(data.keys())].shape[0]
-            # Append the data to the existing zarr file:
-            for key, data_array in data.items():
-                self._data_group[key].append(data_array)
+
+        # Append the data to the existing zarr file:
+        for key, data_array in data.items():
+            self._data_group[key][row : row + expected_length] = data_array
 
         # Update the completed episode index:
         self._completed_eps.append(
@@ -136,16 +160,16 @@ class ZarrDataStorage:
                 "scene_id": scene_id,
                 "episode_id": episode_id,
                 "object_category": object_category,
-                "row": row,
+                "row": int(row),
             }
         )
 
         # Save the episode index in case of early termination:
-        ep_index_path = f"{self._output_zarr_path}/ep_index.json"
+        ep_index_path = f"{self._output_path}/ep_index.json"
         json.dump(self._completed_eps, open(ep_index_path, "w"))
 
     def close(self):
-        self._zarr_file.close()
+        pass
 
 
 class NomadDataStorage:
@@ -250,19 +274,24 @@ class NomadDataStorage:
 class RepresentationGenerator:
 
     def __init__(self, config):
-        print(
-            "WARNING: If using a different NUM_ENVIRONMENTS when generating different "
-            "datasets, the order of the episodes will be different."
-        )
-        self._envs, self._remaining_ep_set = self._init_envs(config)
+        self._envs, episodes = self._init_envs(config)
         self._num_envs = config["NUM_ENVIRONMENTS"]
 
+        self._remaining_ep_set = set(
+            (ep["scene_id"], ep["episode_id"], ep["object_category"]) for ep in episodes
+        )
+
         self._data_generators = get_data_generators(config)
-        self._data_storage = get_data_storage(config, episodes=self._remaining_ep_set)
+        self._data_storage = get_data_storage(config, episodes=episodes)
 
         self._skip_non_movement_actions = config["TASK_CONFIG"][
             "REPRESENTATION_GENERATOR"
         ]["skip_non_movement_actions"]
+
+        self._non_movement_ep_index = episodes.copy()
+        ep_index_path = config["TASK_CONFIG"]["DATASET"]["SUB_SPLIT_INDEX_PATH"]
+        # Put no_movement before extension:
+        self._non_movement_ep_index_path = f"{ep_index_path[:-5]}_movement_only.json"
 
     def _init_envs(self, config):
         config.defrost()
@@ -275,12 +304,8 @@ class RepresentationGenerator:
         with open(sub_split_index_path, "r") as f:
             sub_split_index = json.load(f)
 
-        episodes = set(
-            [
-                (ep["scene_id"], ep["episode_id"], ep["object_category"])
-                for ep in sub_split_index
-            ]
-        )
+        ep_keys = ["scene_id", "episode_id", "object_category", "length"]
+        episodes = [{k: ep[k] for k in ep_keys} for ep in sub_split_index]
 
         envs = construct_envs(
             config,
@@ -306,13 +331,13 @@ class RepresentationGenerator:
         # Done is true on the first step of each episode (non-standard convention):
         dones = [True] * self._num_envs
         should_skips = [False] * self._num_envs
+        movement_step_counts = [0] * self._num_envs
+
+        movement_ep_lengths = {}
 
         # Track the episode info to deduplicate episodes from cycling environments:
         previous_episodes = self._envs.current_episodes()
-        print(
-            f"{previous_episodes[0].scene_id}, {previous_episodes[0].episode_id}, "
-            f"{previous_episodes[0].object_category}"
-        )
+
         step_data = self._generate_step(
             actions, observations, rewards, dones, None, should_skips
         )
@@ -344,6 +369,10 @@ class RepresentationGenerator:
                 ep_metadata = previous_episodes[i]
                 done = dones[i]
 
+                movement_step_counts[i] += not self._is_non_movement_action(
+                    actions[i], prev_obs[i], dones[i], observations[i]
+                )
+
                 if done:
                     # Check if this is a duplicate episode (i.e. an environment that
                     # cycled through all its eps):
@@ -358,6 +387,10 @@ class RepresentationGenerator:
                         # separate array:
                         data = {k: np.stack([d[k] for d in ep]) for k in ep[0]}
                         self._data_storage.save_episode(data, *ep_key)
+
+                        # Update non-movement ep index:
+                        movement_ep_lengths[ep_key] = movement_step_counts[i]
+                        movement_step_counts[i] = 0
                         pbar.update(1)
                     else:
                         print(f"Duplicate episode {ep_key} (skipping)")
@@ -368,6 +401,15 @@ class RepresentationGenerator:
             for ep, data, should_skip in zip(rollout_data, step_data, should_skips):
                 if not should_skip:
                     ep.append(data)
+
+        # Save the ep index with lengths adjusted to only include non-movement actions:
+        for ep in self._non_movement_ep_index:
+            ep["length"] = int(movement_ep_lengths[
+                (ep["scene_id"], ep["episode_id"], ep["object_category"])
+            ])
+        print(f"Num non-movement eps: {len(self._non_movement_ep_index)}")
+        with open(self._non_movement_ep_index_path, "w") as f:
+            json.dump(self._non_movement_ep_index, f)
 
         pbar.close()
         self._data_storage.close()
@@ -381,6 +423,7 @@ class RepresentationGenerator:
                 actions, observations, rewards, dones, infos, self._envs, skipped_last
             )
             data.update(output)
+
         ep_data = [
             {k: v[env_idx] for k, v in data.items()}
             for env_idx in range(self._num_envs)
@@ -390,7 +433,9 @@ class RepresentationGenerator:
     def _should_skip(self, prev_action, prev_obs, prev_done, obs):
         if not self._skip_non_movement_actions:
             return False
+        return self._is_non_movement_action(prev_action, prev_obs, prev_done, obs)
 
+    def _is_non_movement_action(self, prev_action, prev_obs, prev_done, obs):
         # Never skip the first step:
         if prev_done:
             return False
@@ -400,7 +445,7 @@ class RepresentationGenerator:
         if prev_action in [HabitatSimActions.LOOK_DOWN, HabitatSimActions.LOOK_UP]:
             return True
 
-        # Skip if the agent didn't move:
+        # Skip if the agent didn't move and move forward was the action:
         move_distance = np.linalg.norm(prev_obs["gps"] - obs["gps"])
         return prev_action == HabitatSimActions.MOVE_FORWARD and move_distance < 0.1
 
@@ -464,6 +509,7 @@ class ClipGenerator:
             inputs.to(self._device)
             outputs = self._model(**inputs, output_hidden_states=True)
 
+            # Add each batch element as a separate tensor:
             clip_embeddings.append(outputs[1])
             last_two_hidden_layers.append(torch.stack(outputs[2][-2:], dim=1))
 
@@ -471,11 +517,13 @@ class ClipGenerator:
             return (
                 torch.cat(clip_embeddings).to(self._dtype),
                 torch.cat(last_two_hidden_layers).to(self._dtype),
+                # torch.stack(clip_embeddings).to(self._dtype),
+                # torch.stack(last_two_hidden_layers).to(self._dtype),
             )
 
         to_numpy = lambda t: t.detach().cpu().to(self._dtype).numpy()
         data = clip_embeddings, last_two_hidden_layers
-        return {k: map(to_numpy, v) for k, v in zip(self.data_names, data)}
+        return {k: list(map(to_numpy, v)) for k, v in zip(self.data_names, data)}
 
 
 class Vc1Generator:
@@ -525,22 +573,10 @@ class Vc1Generator:
         skipped_last,
         return_tensors=False,
     ):
-        # images = [o["rgb"].swapaxes(0, -1).astype(np.float32) for o in observations]
-        # print([img.shape for img in images])
         images = [Image.fromarray(o["rgb"]) for o in observations]
 
         images = [self._img_transform(img) for img in images]
         images = torch.stack(images).to(self._device)
-        # print(f"images shape: {images.shape}")
-
-        # images_old = torch.stack([torch.tensor(o["rgb"]) for o in observations])
-        # print(f"images_old shape 1: {images_old.shape}")
-        # images_old = einops.rearrange(images_old, "b h w c -> b c h w")
-        # images_old = images_old.to(self._device, dtype=torch.float32)
-        # print(f"images_old shape 2: {images_old.shape}")
-
-        # torch.save(images, "temp/images.pt")
-        # torch.save(images_old, "temp/images_old.pt")
 
         cls_tokens = []
         embeddings = []

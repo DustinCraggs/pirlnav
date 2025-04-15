@@ -52,12 +52,12 @@ python -u -m torch.distributed.run \
     POLICY.PVR_ENCODER.num_layers 2 \
     POLICY.PVR_ENCODER.dropout 0.1 \
     POLICY.SEQ2SEQ.use_prev_action True \
+    TASK_CONFIG.PVR.use_pvr_encoder True \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
-    TASK_CONFIG.PVR.use_pvr_encoder True \
     # NUM_UPDATES 52000 \
     # TASK_CONFIG.PVR.use_fixed_size_embedding True \
 

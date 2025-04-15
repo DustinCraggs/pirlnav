@@ -59,18 +59,12 @@ from torch.utils.data import DataLoader
 
 from pirlnav.algos.agent import DDPILAgent, ILAgent
 from pirlnav.common.rollout_storage import RolloutStorage
-from pirlnav.gen_representation_dataset import RepresentationGenerator
+from pirlnav.gen_representation_dataset import RepresentationGenerator, get_data_generators
 from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_pvr_dataset
 from pirlnav.utils.env_utils import construct_envs
 from pirlnav.utils.utils import SimpleProfiler
 
 
-# TODO:
-# - Each worker is training on the same data. Need to use a random offset for first
-# dataloader.
-# - Consider shuffling object goals in dataset generation
-# - Use multiple streams from the dataset
-# - Manually inspect obs to ensure they are set
 # TODO Next:
 # - Ensure profiling is working and logged to wandb
 #   - Need to log dataloader time, inference time, training iteration time
@@ -86,6 +80,11 @@ from pirlnav.utils.utils import SimpleProfiler
 #   - Is there roughly uniform distribution of scene-goal pairs? If not, should sample
 #     instead of using stride.
 #   - Is the dataset order shuffled and deterministic?
+# - Each worker is training on the same data. Need to use a random offset for first
+# dataloader.
+# - Consider shuffling object goals in dataset generation
+# - Use multiple streams from the dataset
+# - Manually inspect obs to ensure they are set
 
 
 @baseline_registry.register_trainer(name="pvr-pirlnav-il")
@@ -118,17 +117,18 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             dtype=np.int64,
         )
 
-        obs_space["gps"] = spaces.Box(
-            low=np.finfo(np.float32).min,
-            high=np.finfo(np.float32).max,
-            shape=(2,),
-            dtype=np.float32,
-        )
+        # obs_space["gps"] = spaces.Box(
+        #     low=np.finfo(np.float32).min,
+        #     high=np.finfo(np.float32).max,
+        #     shape=(2,),
+        #     dtype=np.float32,
+        # )
 
         # Not sure why these are set as discrete:
         # obs_space["inflection_weight"] = spaces.Discrete(1)
-        obs_space["next_actions"] = spaces.Discrete(1)
+        # obs_space["next_actions"] = spaces.Discrete(1)
         # obs_space["prev_actions"] = spaces.Discrete(1)
+
         obs_space["inflection_weight"] = spaces.Box(
             low=np.finfo(np.float32).min,
             high=np.finfo(np.float32).max,
@@ -136,12 +136,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             dtype=np.float32,
         )
 
-        obs_space["compass"] = spaces.Box(
-            low=-np.pi,
-            high=np.pi,
-            shape=(1,),
-            dtype=np.float32,
-        )
+        # obs_space["compass"] = spaces.Box(
+        #     low=-np.pi,
+        #     high=np.pi,
+        #     shape=(1,),
+        #     dtype=np.float32,
+        # )
 
         # The first dimension of the shapes is the batch size:
         pvr_spaces = {
@@ -718,11 +718,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             None
         """
         # Add replay sensors
-        self.config.defrost()
-        self.config.TASK_CONFIG.TASK.SENSORS.extend(
-            ["DEMONSTRATION_SENSOR", "INFLECTION_WEIGHT_SENSOR"]
-        )
-        self.config.freeze()
+        # self.config.defrost()
+        # self.config.TASK_CONFIG.TASK.SENSORS.extend(
+        #     ["DEMONSTRATION_SENSOR", "INFLECTION_WEIGHT_SENSOR"]
+        # )
+        # self.config.freeze()
 
         profiler = SimpleProfiler()
         print(f"-------------- {checkpoint_path} --------------")
@@ -842,7 +842,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 number_of_eval_episodes = total_num_eps
 
         # Make representation generator:
-        data_generator = RepresentationGenerator.get_data_generator(config)
+        data_generator = get_data_generators(config)[0]
 
         rewards, dones, infos = None, None, None
 
@@ -851,19 +851,26 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         pbar = tqdm.tqdm(total=number_of_eval_episodes)
         logger.info("Sampling actions deterministically...")
         self.actor_critic.eval()
+
+        c = 0
         # while True:
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
             profiler.enter("entire_eval_iter")
             profiler.enter("generate_pvrs")
             # Add PVR to batch:
             pvrs = data_generator.generate(
+                None,
                 observations,
                 rewards,
                 dones,
                 infos,
+                None,
+                None,
                 return_tensors=True,
             )
             pvrs = dict(zip(data_generator.data_names, pvrs))
+
+            print([(k, pvr.shape) for k, pvr in pvrs.items()])
 
             for k in config.TASK_CONFIG.PVR.pvr_keys:
                 batch[k] = pvrs[k]
@@ -882,12 +889,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     not_done_masks,
                     deterministic=True,
                 )
-                # print(actions)
+
                 # print(torch.tensor([[observations[0]["next_actions"]]]))
 
-                prev_actions.copy_(torch.tensor([[observations[0]["next_actions"]]]))  # type: ignore
+                # prev_actions.copy_(torch.tensor([[observations[0]["next_actions"]]]))  # type: ignore
                 # prev_actions.copy_(torch.tensor([[0]]))  # type: ignore
-                # prev_actions.copy_(actions)  # type: ignore
+                prev_actions.copy_(actions)  # type: ignore
 
             # NB: Move actions to CPU.  If CUDA tensors are
             # sent in to env.step(), that will create CUDA contexts
@@ -902,12 +909,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             else:
                 step_data = [a.item() for a in actions.to(device="cpu")]
 
-            step_data = [observations[0]["next_actions"]]
+            print(f"step_data {step_data}")
+
+            # step_data = [observations[0]["next_actions"]]
 
             profiler.exit("get_actions")
             profiler.enter("step_envs")
 
-            print(f"{self.envs.call_sim_at(0, 'get_agent_state')}")
             outputs = self.envs.step(step_data)
 
             profiler.exit("step_envs")
@@ -915,6 +923,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
             profiler.enter("outputs_to_list")
             observations, rewards_l, dones, infos = [list(x) for x in zip(*outputs)]
+            print(f"dones {dones}")
+            if c == 10:
+                dones = [True] * len(dones)
+            c += 1
             profiler.exit("outputs_to_list")
 
             profiler.enter("batch_obs")

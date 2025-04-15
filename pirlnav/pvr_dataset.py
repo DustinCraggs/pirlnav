@@ -88,8 +88,8 @@ def create_pvr_dataset_splits(
     pvr_keys=None,
     nv_keys=None,
 ):
-    # This is probably overcomplicated given that the number of steps would be pretty
-    # similar even if splitting by episode.
+    # TODO: This is probably overcomplicated given that the number of steps would be
+    # pretty similar even if splitting by episode.
     with open(f"{pvr_dataset_path}/ep_index.json") as f:
         ep_index = json.load(f)
 
@@ -97,7 +97,9 @@ def create_pvr_dataset_splits(
 
     # Need to divide dataset into episodes (i.e. episodes should not be broken across
     # multiple splits):
+    ep_index = sorted(ep_index, key=lambda ep_info: ep_info["row"])
     ep_boundaries = [*[ep_info["row"] for ep_info in ep_index], len(dataset)]
+
     target_split_length = len(dataset) // num_splits
     target_end_rows = [target_split_length * (i + 1) for i in range(num_splits)]
 
