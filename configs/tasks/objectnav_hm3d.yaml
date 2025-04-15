@@ -41,8 +41,8 @@ TASK:
   POSSIBLE_ACTIONS: ["STOP", "MOVE_FORWARD", "TURN_LEFT", "TURN_RIGHT", "LOOK_UP", "LOOK_DOWN"]
   SUCCESS_DISTANCE: 0.1
 
-  # SENSORS: ['OBJECTGOAL_SENSOR']
-  SENSORS: ['OBJECTGOAL_SENSOR', 'COMPASS_SENSOR', 'GPS_SENSOR']
+  SENSORS: ['OBJECTGOAL_SENSOR']
+  # SENSORS: ['OBJECTGOAL_SENSOR', 'COMPASS_SENSOR', 'GPS_SENSOR']
   GOAL_SENSOR_UUID: objectgoal
   
   DEMONSTRATION_SENSOR:
@@ -102,10 +102,10 @@ PVR:
   # pvr_keys: ["rgb"]
   # pvr_keys: ["last_hidden_layer_pooled", "cls"]
   pvr_keys: ["last_two_hidden_layers"]
-  # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
-  non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
+  non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
+  # non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "cls"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
-  # obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
+  obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_hidden_layer_pooled", "cls"]
-  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]
