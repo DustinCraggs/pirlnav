@@ -144,6 +144,7 @@ _CONFIG.POLICY = CN()
 _CONFIG.POLICY.RGB_ENCODER = CN()
 _CONFIG.POLICY.RGB_ENCODER.image_size = 256
 _CONFIG.POLICY.RGB_ENCODER.backbone = "resnet50"
+_CONFIG.POLICY.RGB_ENCODER.input_channels = 3
 _CONFIG.POLICY.RGB_ENCODER.resnet_baseplanes = 32
 _CONFIG.POLICY.RGB_ENCODER.vit_use_fc_norm = False
 _CONFIG.POLICY.RGB_ENCODER.vit_global_pool = False
@@ -172,6 +173,7 @@ _CONFIG.POLICY.STATE_ENCODER.num_recurrent_layers = 2
 
 _CONFIG.POLICY.SEQ2SEQ = CN()
 _CONFIG.POLICY.SEQ2SEQ.use_prev_action = True
+_CONFIG.POLICY.SEQ2SEQ.use_final_obs_resid_mlp = False
 
 _CONFIG.POLICY.CRITIC = CN()
 _CONFIG.POLICY.CRITIC.no_critic = False

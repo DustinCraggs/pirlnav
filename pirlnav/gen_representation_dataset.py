@@ -1,49 +1,76 @@
+import copy
 import json
 import os
 import pickle
+import time
 import types
+import cv2
 import einops
 import numpy as np
 import torch
 import torchvision
 import zarr
+import sys
 import tqdm
 import requests
 import io
 import habitat_sim
-
+import networkx as nx
 
 from enum import Enum
 from concurrent.futures import ProcessPoolExecutor
 
 from habitat_sim.utils.common import quat_to_magnum
 from habitat.sims.habitat_simulator.actions import HabitatSimV0ActionSpaceConfiguration
+from pirlnav.environment import SimpleRLEnv
 from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
 from habitat.core.environments import get_env_class
 from habitat.core.vector_env import CURRENT_EPISODE_NAME
 from habitat.core.registry import registry
 
-from vc_models.models.vit import model_utils, vit
+# from vc_models.models.vit import model_utils, vit
+# from transformers import CLIPVisionModel, AutoProcessor
 from scipy.spatial.transform import Rotation
-from transformers import CLIPVisionModel, AutoProcessor
 from PIL import Image
 
+# TODO: Temporary hack as these are not accessible as installable packages:
+sys.path.append("/storage/dc/sg/sg_habitat")
+from map_incremental import IncrementalMapper, SimIncrementalMapper
+from libs.experiments import model_loader
+from libs.matcher import lightglue as matcher_lg
+
+
 # TODO: Change generator to return dict of tensors
+# TODO: DataClass to hold the data and metadata for each episode step
+OBJECTNAV_GOAL_REMAPPING = {
+    "chair": "chair",
+    "bed": "bed",
+    "toilet": "toilet",
+    "plant": "plant",
+    "tv": "tv_monitor",
+    "monitor": "tv_monitor",
+    "sofa": "sofa",
+    "couch": "sofa",
+}
 
 
 def generate_episode_split_index(config):
     output_path = config["TASK_CONFIG"]["SUB_SPLIT_GENERATOR"]["INDEX_PATH"]
     stride = config["TASK_CONFIG"]["SUB_SPLIT_GENERATOR"]["STRIDE"]
+    start_idx = config["TASK_CONFIG"]["SUB_SPLIT_GENERATOR"]["START_IDX"]
     if os.path.dirname(output_path):
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
     # generate_dataset_split_json(config, output_path, stride, object_classes=["toilet"])
-    generate_dataset_split_json(config, output_path, stride)
+    generate_dataset_split_json(config, output_path, stride, start_idx)
 
 
-def get_data_generators(config):
+def get_data_generators(config, num_envs):
     data_generator_registry = {
         "non_visual": NonVisualObservationsGenerator,
         "raw_image": RawImageGenerator,
+        "ground_truth_costmap": GroundTruthCostmapImageGenerator,
+        "ground_truth_perception_graph": GroundTruthPerceptionGraphGenerator,
+        "costmaps": CostmapImageGenerator,
         "clip": ClipGenerator,
         "vc_1": Vc1Generator,
         "cogvlm2": CogVlmGenerator,
@@ -53,7 +80,9 @@ def get_data_generators(config):
     generator_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
 
     return [
-        data_generator_registry[name](**args if args is not None else {})
+        data_generator_registry[name](
+            num_envs=num_envs, **args if args is not None else {}
+        )
         for name, args in generator_config["data_generators"].items()
     ]
 
@@ -62,6 +91,7 @@ def get_data_storage(config, episodes):
     storage_registry = {
         "zarr": ZarrDataStorage,
         "nomad": NomadDataStorage,
+        "graph": GraphDataStorage,
     }
 
     storage_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]["data_storage"]
@@ -73,8 +103,37 @@ def get_data_storage(config, episodes):
     )
 
 
+class CustomEnv(SimpleRLEnv):
+    """env._env._sim.semantic_scene is not pickleable. We only need to get a mapping
+    from IDs (in the semantic image observation) to class labels, however, so this
+    custom env patches that in. Implementation is based on ImageExtractor.
+    """
+
+    def get_semantic_instance_id_to_name_map(self):
+        semantic_scene = self._env._sim.semantic_scene
+
+        instance_id_to_name = {}
+        for obj in semantic_scene.objects:
+            if obj and obj.category:
+                obj_id = int(obj.id.split("_")[-1])
+                instance_id_to_name[obj_id] = (obj.category.name(), obj.aabb.center)
+
+        return instance_id_to_name
+
+    def get_object_centers(self):
+        semantic_scene = self._env._sim.semantic_scene
+        instance_id_to_ob_center = {}
+        for instance in semantic_scene.objects:
+            instance_id = int(instance.id.split("_")[-1])
+            instance_id_to_ob_center[instance_id] = instance.obb.center
+
+        return instance_id_to_ob_center
+
+
 @registry.register_action_space_configuration(name="v1_no_op_look")
-class NoLookActionSpaceConfiguration(HabitatSimV0ActionSpaceConfiguration):
+class NoOpLookActionSpaceConfiguration(HabitatSimV0ActionSpaceConfiguration):
+    """Makes look actions no-ops."""
+
     def get(self):
         config = super().get()
         new_config = {
@@ -91,6 +150,37 @@ class NoLookActionSpaceConfiguration(HabitatSimV0ActionSpaceConfiguration):
         config.update(new_config)
 
         return config
+
+
+class GraphDataStorage:
+
+    def __init__(self, output_path, episodes, **kwargs):
+        self._output_path = output_path
+        self._completed_eps = []
+
+    def save_episode(self, data, scene_id, episode_id, object_category):
+        scene_id = scene_id.split("/")[-2]
+        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+
+        # Only save the final graphs:
+        data = data[-1]
+
+        graph_keys = [k for k in data.keys() if "graph" in k]
+        for k in graph_keys:
+            save_path = f"{self._output_path}/{ep_id}/{k}.pkl"
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with open(save_path, "wb") as f:
+                pickle.dump(data[k], f)
+
+        self._completed_eps.append(ep_id)
+        # Save the episode index in case of early termination:
+        ep_index_path = f"{self._output_path}/ep_index.txt"
+        with open(ep_index_path, "w") as f:
+            for ep in self._completed_eps:
+                f.write(f"{ep}\n")
+
+    def close(self):
+        pass
 
 
 class ZarrDataStorage:
@@ -118,7 +208,6 @@ class ZarrDataStorage:
 
         print(f"Num eps {len(episodes)}")
         print(f"Total length {self._total_length}")
-        print(f"Index {self._episode_index}")
 
     def _init_zarr_file(self, data):
         self._zarr_file = zarr.open(self._output_path, mode="w")
@@ -140,6 +229,8 @@ class ZarrDataStorage:
         row, expected_length = self._episode_index[
             (scene_id, episode_id, object_category)
         ]
+
+        data = {k: np.stack([d[k] for d in data]) for k in data[0]}
 
         data_length = data[next(iter(data.keys()))].shape[0]
         assert (
@@ -192,6 +283,8 @@ class NomadDataStorage:
         scene_id = scene_id.split("/")[-2]
         ep_id = f"{scene_id}_{episode_id}_{object_category}"
         save_dir = f"{self._output_path}/{ep_id}"
+
+        data = {k: np.stack([d[k] for d in data]) for k in data[0]}
 
         os.makedirs(save_dir, exist_ok=True)
 
@@ -281,17 +374,28 @@ class RepresentationGenerator:
             (ep["scene_id"], ep["episode_id"], ep["object_category"]) for ep in episodes
         )
 
-        self._data_generators = get_data_generators(config)
+        self._data_generators = get_data_generators(config, self._num_envs)
         self._data_storage = get_data_storage(config, episodes=episodes)
 
         self._skip_non_movement_actions = config["TASK_CONFIG"][
             "REPRESENTATION_GENERATOR"
         ]["skip_non_movement_actions"]
 
-        self._non_movement_ep_index = episodes.copy()
-        ep_index_path = config["TASK_CONFIG"]["DATASET"]["SUB_SPLIT_INDEX_PATH"]
-        # Put no_movement before extension:
-        self._non_movement_ep_index_path = f"{ep_index_path[:-5]}_movement_only.json"
+        self._skip_look_actions = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"][
+            "skip_look_actions"
+        ]
+
+        self._generate_skip_index = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"][
+            "generate_skip_index"
+        ]
+
+        if self._generate_skip_index:
+            self._non_movement_ep_index = episodes.copy()
+            ep_index_path = config["TASK_CONFIG"]["DATASET"]["SUB_SPLIT_INDEX_PATH"]
+            # Put no_movement before extension:
+            self._non_movement_ep_index_path = (
+                f"{ep_index_path[:-5]}_no_look_actions.json"
+            )
 
     def _init_envs(self, config):
         config.defrost()
@@ -307,9 +411,10 @@ class RepresentationGenerator:
         ep_keys = ["scene_id", "episode_id", "object_category", "length"]
         episodes = [{k: ep[k] for k in ep_keys} for ep in sub_split_index]
 
+        # env_cls = get_env_class(config["ENV_NAME"])
         envs = construct_envs(
             config,
-            get_env_class(config.ENV_NAME),
+            CustomEnv,
             workers_ignore_signals=False,
             shuffle_scenes=False,
             episode_index=sub_split_index,
@@ -339,7 +444,7 @@ class RepresentationGenerator:
         previous_episodes = self._envs.current_episodes()
 
         step_data = self._generate_step(
-            actions, observations, rewards, dones, None, should_skips
+            previous_episodes, actions, observations, rewards, dones, None, should_skips
         )
         for ep, data in zip(rollout_data, step_data):
             ep.append(data)
@@ -361,7 +466,13 @@ class RepresentationGenerator:
             ]
 
             step_data = self._generate_step(
-                actions, observations, rewards, dones, infos, should_skips
+                previous_episodes,
+                actions,
+                observations,
+                rewards,
+                dones,
+                infos,
+                should_skips,
             )
 
             # If done, save the episode (the current obs is for the next ep):
@@ -369,9 +480,8 @@ class RepresentationGenerator:
                 ep_metadata = previous_episodes[i]
                 done = dones[i]
 
-                movement_step_counts[i] += not self._is_non_movement_action(
-                    actions[i], prev_obs[i], dones[i], observations[i]
-                )
+                # TODO: Need to change this line if removing all non-movement actions:
+                movement_step_counts[i] += not self._is_look_action(actions[i])
 
                 if done:
                     # Check if this is a duplicate episode (i.e. an environment that
@@ -385,8 +495,7 @@ class RepresentationGenerator:
                         self._remaining_ep_set.remove(ep_key)
                         # Each element of ep is a dict. Concat each value into a
                         # separate array:
-                        data = {k: np.stack([d[k] for d in ep]) for k in ep[0]}
-                        self._data_storage.save_episode(data, *ep_key)
+                        self._data_storage.save_episode(ep, *ep_key)
 
                         # Update non-movement ep index:
                         movement_ep_lengths[ep_key] = movement_step_counts[i]
@@ -402,25 +511,36 @@ class RepresentationGenerator:
                 if not should_skip:
                     ep.append(data)
 
-        # Save the ep index with lengths adjusted to only include non-movement actions:
-        for ep in self._non_movement_ep_index:
-            ep["length"] = int(movement_ep_lengths[
-                (ep["scene_id"], ep["episode_id"], ep["object_category"])
-            ])
-        print(f"Num non-movement eps: {len(self._non_movement_ep_index)}")
-        with open(self._non_movement_ep_index_path, "w") as f:
-            json.dump(self._non_movement_ep_index, f)
+        if self._generate_skip_index:
+            # Save the ep index with lengths adjusted to only include non-movement
+            # actions:
+            for ep in self._non_movement_ep_index:
+                ep["length"] = int(
+                    movement_ep_lengths[
+                        (ep["scene_id"], ep["episode_id"], ep["object_category"])
+                    ]
+                )
+            print(f"Num non-movement eps: {len(self._non_movement_ep_index)}")
+            with open(self._non_movement_ep_index_path, "w") as f:
+                json.dump(self._non_movement_ep_index, f)
 
         pbar.close()
         self._data_storage.close()
 
     def _generate_step(
-        self, actions, observations, rewards, dones, infos, skipped_last
+        self, ep_metadata, actions, observations, rewards, dones, infos, skipped_last
     ):
         data = {}
         for data_generator in self._data_generators:
             output = data_generator.generate(
-                actions, observations, rewards, dones, infos, self._envs, skipped_last
+                ep_metadata,
+                actions,
+                observations,
+                rewards,
+                dones,
+                infos,
+                self._envs,
+                skipped_last,
             )
             data.update(output)
 
@@ -431,9 +551,11 @@ class RepresentationGenerator:
         return ep_data
 
     def _should_skip(self, prev_action, prev_obs, prev_done, obs):
-        if not self._skip_non_movement_actions:
-            return False
-        return self._is_non_movement_action(prev_action, prev_obs, prev_done, obs)
+        if self._skip_non_movement_actions:
+            return self._is_non_movement_action(prev_action, prev_obs, prev_done, obs)
+        elif self._skip_look_actions:
+            return self._is_look_action(prev_action)
+        return False
 
     def _is_non_movement_action(self, prev_action, prev_obs, prev_done, obs):
         # Never skip the first step:
@@ -441,25 +563,407 @@ class RepresentationGenerator:
             return False
 
         # Skip look actions:
-        prev_action = HabitatSimActions(prev_action)
-        if prev_action in [HabitatSimActions.LOOK_DOWN, HabitatSimActions.LOOK_UP]:
+        if self._is_look_action(prev_action):
             return True
 
         # Skip if the agent didn't move and move forward was the action:
+        prev_action = HabitatSimActions(prev_action)
         move_distance = np.linalg.norm(prev_obs["gps"] - obs["gps"])
         return prev_action == HabitatSimActions.MOVE_FORWARD and move_distance < 0.1
+
+    def _is_look_action(self, prev_action):
+        # Skip look actions:
+        prev_action = HabitatSimActions(prev_action)
+        return prev_action in [HabitatSimActions.LOOK_DOWN, HabitatSimActions.LOOK_UP]
 
 
 class RawImageGenerator:
 
-    def __init__(self):
+    def __init__(self, resize_and_crop_to=None, **kwargs):
         self.data_names = ["rgb"]
+
+        self._transforms = []
+        if resize_and_crop_to:
+            self._transforms.append(torchvision.transforms.Resize(resize_and_crop_to))
+            self._transforms.append(
+                torchvision.transforms.CenterCrop(resize_and_crop_to)
+            )
+
+    def generate(
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+    ):
+        images = [o["rgb"] for o in observations]
+
+        if self._transforms:
+            images = self._apply_transforms(images)
+
+        return {"rgb": images}
+
+    def _apply_transforms(self, images):
+        images = [torch.as_tensor(img).permute(2, 0, 1) for img in images]
+        for transform in self._transforms:
+            images = [transform(img) for img in images]
+        images = [img.permute(1, 2, 0) for img in images]
+        return images
+
+
+class GroundTruthCostmapImageGenerator(RawImageGenerator):
+
+    def __init__(self, num_envs, resize_and_crop_to=None, **kwargs):
+        super().__init__(resize_and_crop_to=resize_and_crop_to, **kwargs)
+        self.data_names = ["goal_costmap", "gt_costmap"]
+
+        self._scene_instance_map = {}
+        self._shortest_path_maps = {}
+
+        self._running_max_costs = [0.0] * num_envs
+
+        self._c = 0
+
+    def generate(
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+    ):
+        for i, done in enumerate(dones):
+            if done:
+                # Reset the running max costs for this environment:
+                self._running_max_costs[i] = 0.0
+
+        goal_costmaps = []
+        gt_costmaps = []
+
+        for i, (ep, obs) in enumerate(zip(ep_metadata, observations)):
+            goal_costmap, gt_costmap = self._get_costmaps(ep, obs, envs, i)
+            goal_costmaps.append(goal_costmap)
+            gt_costmaps.append(gt_costmap)
+
+        if self._transforms:
+            # TODO: Use nearest interpolation?
+            goal_costmaps = self._apply_transforms(goal_costmaps)
+            gt_costmaps = self._apply_transforms(gt_costmaps)
+
+        return {"goal_costmap": goal_costmaps, "gt_costmap": gt_costmaps}
+
+    def _get_costmaps(self, episode, obs, envs, env_idx):
+        scene = episode.scene_id.split("/")[-1]
+        goal = episode.object_category
+
+        if scene not in self._scene_instance_map:
+            self._scene_instance_map[scene] = build_semantic_instance_to_id_map(
+                envs, env_idx
+            )
+
+        instance_to_label_cost = self._scene_instance_map[scene]
+
+        sem_img_height, sem_img_width = obs["semantic"].shape[:2]
+
+        goal_mask_img = np.zeros((sem_img_height, sem_img_width, 1), dtype=bool)
+        for instance_id, (label, dist) in instance_to_label_cost.items():
+            if label == goal:
+                mask = obs["semantic"] == instance_id
+                goal_mask_img[mask] = True
+
+        if (scene, goal) not in self._shortest_path_maps:
+            self._shortest_path_maps[(scene, goal)] = self._get_shortest_path_map(
+                instance_to_label_cost, goal, envs, env_idx
+            )
+
+        gt_costmap = self._get_geodesic_distance_costmap(
+            obs["semantic"], self._shortest_path_maps[(scene, goal)], env_idx
+        )
+
+        return goal_mask_img, gt_costmap
+
+    def _get_shortest_path_map(
+        self, instance_to_label_cost, goal, envs, env_idx, use_log_costs=True
+    ):
+        goal_positions = [
+            pos for label, pos in instance_to_label_cost.values() if goal in label
+        ]
+        if not goal_positions:
+            with open("missing_goald.txt", "a") as f:
+                f.write(
+                    f"No goal positions found for {goal} in scene {envs.current_episodes()[env_idx].scene_id}\n"
+                )
+                f.write(
+                    f"Labels: {list(label for label, cost in instance_to_label_cost.values())}"
+                )
+            return {instance: 1.0 for instance in instance_to_label_cost}
+
+        instance_to_cost = {
+            instance_id: (
+                envs.call_sim_at(
+                    env_idx,
+                    "geodesic_distance",
+                    {"position_a": pos, "position_b": goal_positions},
+                )
+                if goal not in label
+                else 0.0
+            )
+            for instance_id, (label, pos) in instance_to_label_cost.items()
+        }
+
+        if use_log_costs:
+            # Use log costs to avoid large values:
+            instance_to_cost = {
+                instance_id: np.log(cost + 1) if np.isfinite(cost) else np.inf
+                for instance_id, cost in instance_to_cost.items()
+            }
+
+        return instance_to_cost
+
+    def _get_geodesic_distance_costmap(self, semantic_img, instance_to_cost, env_idx):
+        normalised_instance_to_cost = self._get_normalised_costs(
+            semantic_img, instance_to_cost, env_idx
+        )
+
+        # Map each instance_id in the semantic image to its cost (looping is faster
+        # than the vectorised remapping):
+        for k in np.unique(semantic_img):
+            semantic_img[semantic_img == k] = normalised_instance_to_cost.get(k, 1.0)
+
+        return (semantic_img * 255).astype(np.uint8)
+
+    def _get_normalised_costs(
+        self, semantic_img, instance_to_cost, env_idx, max_valid_cost=0.8
+    ):
+        current_instances = np.unique(semantic_img)
+        current_costs = [
+            instance_to_cost.get(instance, np.inf) for instance in current_instances
+        ]
+
+        if not np.isfinite(current_costs).any():
+            # If all costs are invalid, return a map with all costs set to 1.0:
+            return {instance: 1.0 for instance in current_instances}
+
+        max_frame_cost = max(cost for cost in current_costs if np.isfinite(cost))
+
+        # Update the maximum cost encountered so far for this episode. This is to match
+        # normalisation of the cost predictor:
+        self._running_max_costs[env_idx] = max(
+            self._running_max_costs[env_idx], max_frame_cost
+        )
+
+        # Normalise the costs to [0, max_valid_cost], with 1.0 for invalid costs:
+        max_cost = self._running_max_costs[env_idx]
+
+        instance_to_cost = {
+            instance_id: (
+                cost / max_cost * max_valid_cost if np.isfinite(cost) else 1.0
+            )
+            for instance_id, cost in instance_to_cost.items()
+        }
+
+        return instance_to_cost
+
+
+class GroundTruthPerceptionGraphGenerator:
+
+    def __init__(self, num_envs, **kwargs):
+        self.data_names = ["gt_perception_graph"]
+
+        self._make_mapper_fn = lambda: SimIncrementalMapper()
+
+        self._mappers = [None for _ in range(num_envs)]
+        self._graphs = [None for _ in range(num_envs)]
+
+        self._scene_object_centers = {}
+        self._label_descriptor_cache = {}
+
+    def generate(
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+    ):
+        for i, done in enumerate(dones):
+            if done:
+                # Done is true on the first step of a new episode:
+                self._mappers[i] = self._make_mapper_fn()
+                self._graphs[i] = nx.Graph()
+
+        for i, (graph, mapper, obs) in enumerate(
+            zip(self._graphs, self._mappers, observations)
+        ):
+            scene = ep_metadata[i].scene_id.split("/")[-1]
+            self._update_graph(
+                graph, mapper, obs["rgb"], obs["semantic"], obs["depth"], scene, envs, i
+            )
+
+        return {"gt_perception_graph": self._graphs}
+
+    def _update_graph(self, graph, mapper, rgb, semantic, depth, scene, envs, env_idx):
+        if scene not in self._scene_object_centers:
+            self._scene_object_centers[scene] = envs.call_at(
+                env_idx, "get_object_centers"
+            )
+
+        object_centers = self._scene_object_centers[scene]
+
+        semantic = semantic[..., 0]
+        mapper.update(graph, object_centers, rgb, semantic, depth)
+
+        self._add_clip_embeddings(graph, mapper, envs, env_idx)
+
+    def _add_clip_embeddings(self, graph, mapper, envs, env_idx):
+        new_nodes = [
+            (n, attr) for n, attr in graph.nodes(data=True) if "label" not in attr
+        ]
+
+        instance_id_to_label_dist = envs.call_at(
+            env_idx, "get_semantic_instance_id_to_name_map"
+        )
+        instance_id_to_label = {k: v[0] for k, v in instance_id_to_label_dist.items()}
+
+        labels = [
+            instance_id_to_label.get(attr["instance_id"], "unknown")
+            for n, attr in new_nodes
+        ]
+
+        for label in labels:
+            if label not in self._label_descriptor_cache:
+                self._label_descriptor_cache[label] = (
+                    mapper.descriptor_generator.get_text_descriptors([label])[0]
+                )
+
+        labels_clip = [self._label_descriptor_cache[label] for label in labels]
+
+        goal_labels = [OBJECTNAV_GOAL_REMAPPING.get(label) for label in labels]
+
+        for (n, attr), label, label_clip, goal_label in zip(
+            new_nodes, labels, labels_clip, goal_labels
+        ):
+            attr["label"] = label
+            attr["label_clip"] = label_clip
+
+            if goal_label:
+                attr["goal_label"] = goal_label
+                if goal_label not in self._label_descriptor_cache:
+                    self._label_descriptor_cache[goal_label] = (
+                        mapper.descriptor_generator.get_text_descriptors([goal_label])[
+                            0
+                        ]
+                    )
+                attr["goal_label_clip"] = self._label_descriptor_cache[goal_label]
+
+
+class CostmapImageGenerator:
+
+    def __init__(
+        self,
+        num_envs,
+        rgb_width,
+        rgb_height,
+        hfov,
+        costmap_width,
+        costmap_height,
+        use_gt_perception=False,
+        **kwargs,
+    ):
+        self._costmap_width = costmap_width
+        self._costmap_height = costmap_height
+        self._use_gt_perception = use_gt_perception
+
+        if use_gt_perception:
+            self.data_names = ["gt_costmap"]
+
+            self._make_mapper_fn = lambda: SimIncrementalMapper(
+                rgb_width, rgb_height, hfov
+            )
+        else:
+            self.data_names = ["predicted_costmap"]
+
+            segmentor = model_loader.get_segmentor(
+                "fast_sam", rgb_width, rgb_height, "cuda"
+            )
+            matcher = matcher_lg.MatchLightGlue(
+                rgb_width, rgb_height, cfg={"match_area": True}
+            )
+            depth_model = model_loader.get_depth_model()
+
+            self._make_mapper_fn = lambda: IncrementalMapper(
+                segmentor,
+                matcher,
+                depth_model,
+                text_labels=[],
+                add_clip_embeddings=True,
+                matching_window_size=3,
+                matching_top_k=None,
+            )
+
+        self._mappers = [None for _ in range(num_envs)]
+        self._graphs = [None for _ in range(num_envs)]
 
     @torch.no_grad()
     def generate(
-        self, actions, observations, rewards, dones, infos, envs, skipped_last
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
     ):
-        return {"rgb": [o["rgb"] for o in observations]}
+        for i, done in enumerate(dones):
+            if done:
+                # Done is true on the first step of a new episode:
+                self._mappers[i] = self._make_mapper()
+                self._graphs[i] = nx.Graph()
+
+        for i, obs in enumerate(observations):
+            if self._use_gt_perception:
+                agent_state = envs.call_sim_at(i, "get_agent_state")
+                self._mappers[i].update(
+                    self._graphs[i],
+                    envs[i].sim,
+                    obs["rgb"],
+                    obs["depth_img"],
+                    obs["semantic_img"],
+                    agent_state,
+                )
+            else:
+                self._mappers[i].update(self._graphs[i], obs["rgb"])
+
+        # return {"rgb": [o["rgb"] for o in observations]}
+
+    def _get_latest_frame_costs(self, graph):
+        contracted_graph = contract_da_edges(
+            copy.deepcopy(graph), target_selection="first"
+        )
+        orig_idx_to_contracted_idx = get_orig_idx_to_contracted_idx_map(
+            contracted_graph
+        )
+
+        predicted_costmap = build_costmap_image(
+            predicted_costs[frame],
+            frame_nodes,
+            frame_masks,
+            orig_idx_to_contracted_idx,
+            costmap_width,
+            costmap_height,
+        )
 
 
 class ClipGenerator:
@@ -490,6 +994,7 @@ class ClipGenerator:
     @torch.no_grad()
     def generate(
         self,
+        ep_metadata,
         actions,
         observations,
         rewards,
@@ -510,15 +1015,13 @@ class ClipGenerator:
             outputs = self._model(**inputs, output_hidden_states=True)
 
             # Add each batch element as a separate tensor:
-            clip_embeddings.append(outputs[1])
-            last_two_hidden_layers.append(torch.stack(outputs[2][-2:], dim=1))
+            clip_embeddings.extend(outputs[1])
+            last_two_hidden_layers.extend(torch.stack(outputs[2][-2:], dim=1))
 
         if return_tensors:
             return (
-                torch.cat(clip_embeddings).to(self._dtype),
-                torch.cat(last_two_hidden_layers).to(self._dtype),
-                # torch.stack(clip_embeddings).to(self._dtype),
-                # torch.stack(last_two_hidden_layers).to(self._dtype),
+                torch.stack(clip_embeddings).to(self._dtype),
+                torch.stack(last_two_hidden_layers).to(self._dtype),
             )
 
         to_numpy = lambda t: t.detach().cpu().to(self._dtype).numpy()
@@ -564,6 +1067,7 @@ class Vc1Generator:
     @torch.no_grad()
     def generate(
         self,
+        ep_metadata,
         actions,
         observations,
         rewards,
@@ -668,6 +1172,7 @@ class CogVlmGenerator:
     @torch.no_grad()
     def generate(
         self,
+        ep_metadata,
         actions,
         observations,
         rewards,
@@ -727,7 +1232,15 @@ class NonVisualObservationsGenerator:
         ]
 
     def generate(
-        self, actions, observations, rewards, dones, infos, envs, skipped_last
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
     ):
         data = {k: [obs[k] for obs in observations] for k in self._obs_keys}
         data["reward"] = rewards
@@ -760,7 +1273,15 @@ class AgentStateGenerator:
         self.prev_output_positions = None
 
     def generate(
-        self, prev_actions, observations, rewards, dones, infos, envs, skipped_last
+        self,
+        ep_metadata,
+        prev_actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
     ):
         num_envs = len(observations)
         agent_states = [envs.call_sim_at(i, "get_agent_state") for i in range(num_envs)]
@@ -827,6 +1348,26 @@ def convert_rotation_to_small_movement(
 
     movement = movement_size * np.array([np.cos(yaw), np.sin(yaw)])
     return prev_output_pos + movement
+
+
+def build_semantic_instance_to_id_map(envs, env_idx):
+    instance_id_to_label_dist = envs.call_at(
+        env_idx, "get_semantic_instance_id_to_name_map"
+    )
+
+    # The target object categories sometimes have additional text (e.g. "armchair"),
+    # or multiple names for the same thing (e.g. couch, sofa) so we remap them to a
+    # canonical label:
+    # TODO: How was this done for the original ObjectNav dataset? There are some
+    # false positives here (e.g. "tv cabinet"):
+    remap_labels = OBJECTNAV_GOAL_REMAPPING
+
+    for instance_id, (orig_label, cost) in instance_id_to_label_dist.items():
+        for remap_label, remap_val in remap_labels.items():
+            if remap_label in orig_label:
+                instance_id_to_label_dist[instance_id] = (remap_val, cost)
+                break
+    return instance_id_to_label_dist
 
 
 # def convert_rotation_to_small_movement(

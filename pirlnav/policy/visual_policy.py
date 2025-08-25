@@ -1,8 +1,10 @@
-from collections import defaultdict
 import os
 import torch
 import torch.nn as nn
+import torchvision.transforms.functional as TF
+
 from typing import Optional
+from collections import defaultdict
 from gym import Space
 from habitat import Config, logger
 from habitat.tasks.nav.nav import EpisodicCompassSensor, EpisodicGPSSensor
@@ -112,10 +114,22 @@ class ObjectNavILMAENet(Net):
             # policy_config.RGB_ENCODER.hidden_size
             rnn_input_size += pvr_token_dim
         else:
+            self._costmap_names = rgb_config.get("costmap_names", [])
+
+            if self._costmap_names:
+
+                def _costmap_transform(img):
+                    img = img.permute(0, 3, 1, 2)
+                    img = TF.resize(img, rgb_config.image_size)
+                    img = TF.center_crop(img, output_size=rgb_config.image_size)
+                    return img.permute(0, 2, 3, 1)
+
+                self._costmap_resize = _costmap_transform
+
             self.visual_encoder = VisualEncoder(
                 image_size=rgb_config.image_size,
                 backbone=rgb_config.backbone,
-                input_channels=3,
+                input_channels=rgb_config.input_channels,
                 resnet_baseplanes=rgb_config.resnet_baseplanes,
                 resnet_ngroups=rgb_config.resnet_baseplanes // 2,
                 avgpooled_image=rgb_config.avgpooled_image,
@@ -165,6 +179,29 @@ class ObjectNavILMAENet(Net):
         self._hidden_size = hidden_size
         self.train()
 
+        self.use_final_obs_resid_mlp = policy_config.SEQ2SEQ.use_final_obs_resid_mlp
+        if self.use_final_obs_resid_mlp:
+            # self.final_obs_resid_mlp = nn.Sequential(
+            #     nn.Linear(hidden_size + rnn_input_size, hidden_size),
+            #     nn.ReLU(True),
+            #     nn.Linear(hidden_size, hidden_size),
+            # )
+            num_final_mlp_layers = 3
+            input_size = hidden_size + rnn_input_size
+            final_mlp_layers = []
+            for _ in range(num_final_mlp_layers - 1):
+                final_mlp_layers.append(
+                    nn.Sequential(
+                        nn.Linear(input_size, hidden_size),
+                        nn.LayerNorm(hidden_size),
+                        nn.ReLU(True),
+                    )
+                )
+                input_size = hidden_size
+
+            final_mlp_layers.append(nn.Linear(hidden_size, hidden_size))
+            self.final_obs_resid_mlp = nn.Sequential(*final_mlp_layers)
+
         self.batch_store = defaultdict(list)
 
     @property
@@ -188,36 +225,8 @@ class ObjectNavILMAENet(Net):
         N = rnn_hidden_states.size(1)
         x = []
 
-        # print(f"observations {observations}")
-        # print(f"prev_actions {prev_actions}")
-        # print(f"masks {masks}")
-
-        # # Save tensors for all inputs to disk:
-        # num_batches = 640
-        # directory = "temp/pvr_train_vs_eval/eval_2"
-        # # directory = "temp/test_demo_acts_no_vis_transform"
-        # os.makedirs(directory, exist_ok=True)
-        # for name, data in observations.items():
-        #     self.batch_store[f"obs_{name}"].append(data.clone())
-        #     if len(self.batch_store[f"obs_{name}"]) == num_batches:
-        #         torch.save(
-        #             torch.cat(self.batch_store[f"obs_{name}"], dim=0),
-        #             f"{directory}/obs_{name}.pt",
-        #         )
-        # data_names = ["rnn_hidden_states", "prev_actions", "masks"]
-        # for name, data in zip(data_names, [rnn_hidden_states, prev_actions, masks]):
-        #     self.batch_store[name].append(data.clone())
-        #     if len(self.batch_store[name]) == num_batches:
-        #         torch.save(
-        #             torch.cat(self.batch_store[name], dim=0),
-        #             f"{directory}/{name}.pt",
-        #         )
-        # if len(self.batch_store["masks"]) == num_batches:
-        #     exit()
-
         if EpisodicGPSSensor.cls_uuid in observations:
             obs_gps = observations[EpisodicGPSSensor.cls_uuid]
-            print(f"obs_gps {obs_gps}")
 
             if len(obs_gps.size()) == 3:
                 obs_gps = obs_gps.contiguous().view(-1, obs_gps.size(2))
@@ -225,7 +234,7 @@ class ObjectNavILMAENet(Net):
 
         if EpisodicCompassSensor.cls_uuid in observations:
             obs_compass = observations["compass"]
-            print(f"obs_compass {obs_compass}")
+
             if len(obs_compass.size()) == 3:
                 obs_compass = obs_compass.contiguous().view(-1, obs_compass.size(2))
             compass_observations = torch.stack(
@@ -247,7 +256,6 @@ class ObjectNavILMAENet(Net):
             x.append(self.obj_categories_embedding(object_goal).squeeze(dim=1))
 
         if self.policy_config.SEQ2SEQ.use_prev_action:
-            print(f"prev_actions {prev_actions}")
             prev_actions_embedding = self.prev_action_embedding(
                 ((prev_actions.float() + 1) * masks).long().view(-1)
             )
@@ -260,39 +268,60 @@ class ObjectNavILMAENet(Net):
                 # Remove extra dimensions that exist to match sequential PVRs:
                 x.append(observations[k].squeeze(1).squeeze(1))
         elif self.use_pvr_encoder:
-
-            # nv_obs = torch.cat(x, dim=1)
-            # nv_tokens = self.non_visual_embedding(nv_obs).unsqueeze(1)
-            nv_tokens = None
-            # TODO: This won't work for PVR tokens of different shape. Need dict of
-            # PVR encoders instead.
+            nv_obs = torch.cat(x, dim=1)
+            nv_tokens = self.non_visual_embedding(nv_obs).unsqueeze(1)
+            # nv_tokens = None
             # TODO: For multi-PVR, use single encoder and project to same
-            # dimensionality?
+            # dimensionality
             pvr_tokens = torch.cat([observations[k] for k in self.pvr_obs_keys])
-            print(f"pvr_tokens.shape {pvr_tokens.shape}")
-            # print(f"PVR TOKENS SHAPE {pvr_tokens.shape}")
-            print(f"pvr {pvr_tokens.shape}")
+
             pvr_embedding = self.pvr_encoder(pvr_tokens, nv_tokens)
             x.append(pvr_embedding)
         elif self.visual_encoder is not None:
             rgb_obs = observations["rgb"]
+
+            if self._costmap_names:
+                # Pre-resize the RGB observation to match costmap size:
+                rgb_obs = self._costmap_resize(rgb_obs)
+
+            # Channel-wise stack rgb and costmaps. This needs to occur before visual
+            # transforms in order to apply the same augmentations:
+            for costmap_name in self._costmap_names:
+                costmap = self._costmap_resize(observations[costmap_name])
+
+                if costmap_name == "goal_costmap":
+                    # Convert boolean goal_costmap to float (quick hack as the
+                    # goal_costmap is only for testing currently):
+                    costmap = costmap * 255.0
+
+                # Channel stack:
+                rgb_obs = torch.cat([rgb_obs, costmap], dim=-1)
+
+            observations["rgb"] = rgb_obs
             if len(rgb_obs.size()) == 5:
                 observations["rgb"] = rgb_obs.contiguous().view(
                     -1, rgb_obs.size(2), rgb_obs.size(3), rgb_obs.size(4)
                 )
+
             # visual encoder
             rgb = observations["rgb"]
-
             rgb = self.visual_transform(rgb, N)
             rgb = self.visual_encoder(rgb)
             rgb = self.visual_fc(rgb)
             x.append(rgb)
 
         x = torch.cat(x, dim=1)
+        all_obs = x
+
+        # TODO: Shouldn't there be a projection here to use same dim for RNN every time?
 
         x, rnn_hidden_states = self.state_encoder(
             x, rnn_hidden_states.contiguous(), masks
         )
+
+        if self.use_final_obs_resid_mlp:
+            x_obs = torch.cat((x, all_obs), dim=1)
+            x = self.final_obs_resid_mlp(x_obs)
 
         return x, rnn_hidden_states
 

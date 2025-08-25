@@ -44,7 +44,7 @@ def get_num_unique(episodes):
 
 
 def generate_dataset_split_json(
-    config: Config, output_path, stride, object_classes=None
+    config: Config, output_path, stride, start_idx=0, object_classes=None
 ):
     dataset_config = config.TASK_CONFIG.DATASET
     dataset = make_dataset(dataset_config.TYPE, config=dataset_config)
@@ -57,7 +57,7 @@ def generate_dataset_split_json(
 
     num_unique_pairs_before = get_num_unique(episodes)
     episodes.sort(key=lambda ep: (ep.scene_id, ep.object_category))
-    episodes = episodes[::stride]
+    episodes = episodes[start_idx::stride]
 
     if object_classes is not None:
         episodes = [ep for ep in episodes if ep.object_category in object_classes]

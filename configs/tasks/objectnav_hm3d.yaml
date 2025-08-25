@@ -12,7 +12,7 @@ SIMULATOR:
   TILT_ANGLE: 30
   ACTION_SPACE_CONFIG: "v1"
   AGENT_0:
-    SENSORS: ['RGB_SENSOR']
+    SENSORS: ['RGB_SENSOR', "DEPTH_SENSOR", "SEMANTIC_SENSOR"]
     HEIGHT: 0.88
     RADIUS: 0.18
   HABITAT_SIM_V0:
@@ -24,16 +24,16 @@ SIMULATOR:
     HFOV: 79
     POSITION: [0, 0.88, 0]
   RGB_SENSOR:
-    # WIDTH: 640
-    # HEIGHT: 480
-    # HFOV: 79
-    # POSITION: [0, 0.88, 0]
+    WIDTH: 640
+    HEIGHT: 480
+    HFOV: 79
+    POSITION: [0, 0.88, 0]
     # Stretch-like
-    WIDTH: 450
-    HEIGHT: 600
-    HFOV: 90
-    POSITION: [0, 1.3, 0]
-    ORIENTATION: [-0.35, 0, 0]
+    # WIDTH: 450
+    # HEIGHT: 600
+    # HFOV: 90
+    # POSITION: [0, 1.3, 0]
+    # ORIENTATION: [-0.35, 0, 0]
   DEPTH_SENSOR:
     WIDTH: 640
     HEIGHT: 480
@@ -47,8 +47,8 @@ TASK:
   POSSIBLE_ACTIONS: ["STOP", "MOVE_FORWARD", "TURN_LEFT", "TURN_RIGHT", "LOOK_UP", "LOOK_DOWN"]
   SUCCESS_DISTANCE: 0.1
 
-  SENSORS: ['OBJECTGOAL_SENSOR']
-  # SENSORS: ['OBJECTGOAL_SENSOR', 'COMPASS_SENSOR', 'GPS_SENSOR']
+  # SENSORS: ['OBJECTGOAL_SENSOR']
+  SENSORS: ['OBJECTGOAL_SENSOR', 'COMPASS_SENSOR', 'GPS_SENSOR']
   GOAL_SENSOR_UUID: objectgoal
   
   DEMONSTRATION_SENSOR:
@@ -82,21 +82,29 @@ DATASET:
 
 SUB_SPLIT_GENERATOR:
   STRIDE: 10
+  START_IDX: 0
   INDEX_PATH: null
 
 REPRESENTATION_GENERATOR:
   skip_non_movement_actions: False
+  skip_look_actions: False
+  generate_skip_index: False
   data_generators:
     # raw_image:
+    #   resize_and_crop_to: 256
     # agent_state:
     # non_visual:
-    clip:
-      use_float16: True
+    # clip:
+    #   use_float16: True
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
+    # ground_truth_costmap:
+    #   resize_and_crop_to: 128
+    ground_truth_perception_graph:
   data_storage:
     output_path: /storage/dc/pvr_data/default
     # Zarr:
-    name: "zarr"
+    name: "graph"
+    # name: "zarr"
     kwargs:
       batch_chunk_size: 1000
     # NoMaD:
@@ -111,11 +119,15 @@ PVR:
   # pvr_keys: ["cls"]
   # pvr_keys: ["rgb"]
   # pvr_keys: ["last_hidden_layer_pooled", "cls"]
-  pvr_keys: ["last_two_hidden_layers"]
-  non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
-  # non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
+  # pvr_keys: ["last_two_hidden_layers"]
+  # pvr_keys: ["rgb", "goal_costmap"]
+  pvr_keys: ["rgb", "gt_costmap"]
+  # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
+  non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "cls"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
-  obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
+  # obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_hidden_layer_pooled", "cls"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "goal_costmap"]
+  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "gt_costmap"]

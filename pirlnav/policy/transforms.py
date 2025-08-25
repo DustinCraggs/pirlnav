@@ -94,7 +94,8 @@ class ShiftAndJitterTransform(Transform):
         x = TF.center_crop(x, output_size=self.size)
         x = x.float() / 255.0
         if "jitter" in self.augmentations_name:
-            x = RandomApply([ColorJitter(0.4, 0.4, 0.4, 0.4)], p=1.0)(x)
+            # Apply to first 3 channels only
+            x[:, :3] = RandomApply([ColorJitter(0.4, 0.4, 0.4, 0.4)], p=1.0)(x[:, :3])
         if "shift" in self.augmentations_name:
             x = RandomShiftsAug(16)(x)
         return x

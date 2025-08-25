@@ -36,9 +36,9 @@ python -u -m torch.distributed.run \
     TENSORBOARD_DIR $TENSORBOARD_DIR \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
     NUM_UPDATES 52000 \
-    NUM_ENVIRONMENTS 32 \
+    NUM_ENVIRONMENTS 16 \
     IL.BehaviorCloning.num_steps 64 \
-    IL.BehaviorCloning.num_mini_batch 32 \
+    IL.BehaviorCloning.num_mini_batch 16 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
     RL.DDPPO.force_distributed True \

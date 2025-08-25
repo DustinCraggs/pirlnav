@@ -3,8 +3,8 @@ CMD_TRAILING_OPTS: ["TASK_CONFIG.ENVIRONMENT.ITERATOR_OPTIONS.MAX_SCENE_REPEAT_S
 ENV_NAME: "SimpleRLEnv"
 SIMULATOR_GPU_ID: 0
 TORCH_GPU_ID: 0
-# VIDEO_OPTION: ["disk"]
-VIDEO_OPTION: []
+VIDEO_OPTION: ["disk"]
+# VIDEO_OPTION: []
 TENSORBOARD_DIR: ""
 VIDEO_DIR: "video_dir"
 TEST_EPISODE_COUNT: -1
@@ -12,7 +12,7 @@ EVAL_CKPT_PATH_DIR: "data/new_checkpoints"
 NUM_ENVIRONMENTS: 32
 CHECKPOINT_FOLDER: "data/new_checkpoints"
 TRAINER_NAME: "pirlnav-il"
-SENSORS: ["RGB_SENSOR"]
+SENSORS: ["RGB_SENSOR", "DEPTH_SENSOR", "SEMANTIC_SENSOR"]
 NUM_UPDATES: 40000
 LOG_INTERVAL: 10
 NUM_CHECKPOINTS: 10
@@ -35,8 +35,14 @@ RL:
   SLACK_REWARD: -1e-3
 
 POLICY:
+  SEQ2SEQ:
+    use_final_obs_resid_mlp: False
   CRITIC:
     no_critic: True
+  RGB_ENCODER:
+    # costmap_names: []
+    costmap_names: ["gt_costmap"]
+    # costmap_names: ["goal_costmap"]
 
 WB:
   ENTITY: gyo

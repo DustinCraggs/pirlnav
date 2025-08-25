@@ -117,12 +117,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             dtype=np.int64,
         )
 
-        # obs_space["gps"] = spaces.Box(
-        #     low=np.finfo(np.float32).min,
-        #     high=np.finfo(np.float32).max,
-        #     shape=(2,),
-        #     dtype=np.float32,
-        # )
+        obs_space["gps"] = spaces.Box(
+            low=np.finfo(np.float32).min,
+            high=np.finfo(np.float32).max,
+            shape=(2,),
+            dtype=np.float32,
+        )
 
         # Not sure why these are set as discrete:
         # obs_space["inflection_weight"] = spaces.Discrete(1)
@@ -136,12 +136,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             dtype=np.float32,
         )
 
-        # obs_space["compass"] = spaces.Box(
-        #     low=-np.pi,
-        #     high=np.pi,
-        #     shape=(1,),
-        #     dtype=np.float32,
-        # )
+        obs_space["compass"] = spaces.Box(
+            low=-np.pi,
+            high=np.pi,
+            shape=(1,),
+            dtype=np.float32,
+        )
 
         # The first dimension of the shapes is the batch size:
         pvr_spaces = {
@@ -274,6 +274,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         observation_space = self._obs_space
         self.obs_transforms = get_active_obs_transforms(self.config)
+        print(f"{self.obs_transforms=}")
         observation_space = apply_obs_transforms_obs_space(
             observation_space, self.obs_transforms
         )
@@ -783,13 +784,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         policy_cfg = config.POLICY
         self._setup_actor_critic_agent(il_cfg)
 
-        # if self.agent.actor_critic.should_load_agent_state:
-        #     self.agent.load_state_dict(
-        #         {
-        #             k.replace("model.", "actor_critic."): v
-        #             for k, v in ckpt_dict["state_dict"].items()
-        #         }
-        #     )
+        if self.agent.actor_critic.should_load_agent_state:
+            self.agent.load_state_dict(
+                {
+                    k.replace("model.", "actor_critic."): v
+                    for k, v in ckpt_dict["state_dict"].items()
+                }
+            )
         self.actor_critic = self.agent.actor_critic
 
         observations = self.envs.reset()
@@ -870,8 +871,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             )
             pvrs = dict(zip(data_generator.data_names, pvrs))
 
-            print([(k, pvr.shape) for k, pvr in pvrs.items()])
-
             for k in config.TASK_CONFIG.PVR.pvr_keys:
                 batch[k] = pvrs[k]
 
@@ -909,8 +908,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             else:
                 step_data = [a.item() for a in actions.to(device="cpu")]
 
-            print(f"step_data {step_data}")
-
             # step_data = [observations[0]["next_actions"]]
 
             profiler.exit("get_actions")
@@ -923,10 +920,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
             profiler.enter("outputs_to_list")
             observations, rewards_l, dones, infos = [list(x) for x in zip(*outputs)]
-            print(f"dones {dones}")
-            if c == 10:
-                dones = [True] * len(dones)
-            c += 1
+
             profiler.exit("outputs_to_list")
 
             profiler.enter("batch_obs")
