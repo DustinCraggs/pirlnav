@@ -846,25 +846,26 @@ class GroundTruthPerceptionGraphGenerator:
                     mapper.descriptor_generator.get_text_descriptors([label])[0]
                 )
 
-        labels_clip = [self._label_descriptor_cache[label] for label in labels]
+        # TODO: Storing all CLIP labels uses too much space. Can store the cache
+        # at the end instead, or generate over contracted graphs when loading the
+        # dataset:
+        # labels_clip = [self._label_descriptor_cache[label] for label in labels]
 
         goal_labels = [OBJECTNAV_GOAL_REMAPPING.get(label) for label in labels]
 
-        for (n, attr), label, label_clip, goal_label in zip(
-            new_nodes, labels, labels_clip, goal_labels
-        ):
+        for (n, attr), label, goal_label in zip(new_nodes, labels, goal_labels):
             attr["label"] = label
-            attr["label_clip"] = label_clip
+            # attr["label_clip"] = label_clip
 
             if goal_label:
                 attr["goal_label"] = goal_label
-                if goal_label not in self._label_descriptor_cache:
-                    self._label_descriptor_cache[goal_label] = (
-                        mapper.descriptor_generator.get_text_descriptors([goal_label])[
-                            0
-                        ]
-                    )
-                attr["goal_label_clip"] = self._label_descriptor_cache[goal_label]
+                # if goal_label not in self._label_descriptor_cache:
+                #     self._label_descriptor_cache[goal_label] = (
+                #         mapper.descriptor_generator.get_text_descriptors([goal_label])[
+                #             0
+                #         ]
+                #     )
+                # attr["goal_label_clip"] = self._label_descriptor_cache[goal_label]
 
 
 class CostmapImageGenerator:
