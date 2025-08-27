@@ -289,10 +289,10 @@ class ObjectNavILMAENet(Net):
             for costmap_name in self._costmap_names:
                 costmap = self._costmap_resize(observations[costmap_name])
 
-                if costmap_name == "goal_costmap":
-                    # Convert boolean goal_costmap to float (quick hack as the
-                    # goal_costmap is only for testing currently):
-                    costmap = costmap * 255.0
+                # if costmap_name == "goal_costmap":
+                #     # Convert boolean goal_costmap to float (quick hack as the
+                #     # goal_costmap is only for testing currently):
+                #     costmap = costmap * 255.0
 
                 # Channel stack:
                 rgb_obs = torch.cat([rgb_obs, costmap], dim=-1)

@@ -252,10 +252,12 @@ class ZarrDataStorage:
                 "episode_id": episode_id,
                 "object_category": object_category,
                 "row": int(row),
+                "length": int(data_length),
             }
         )
 
         # Save the episode index in case of early termination:
+        # TODO: Move to superclass:
         ep_index_path = f"{self._output_path}/ep_index.json"
         json.dump(self._completed_eps, open(ep_index_path, "w"))
 
@@ -668,19 +670,18 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
                 envs, env_idx
             )
 
-        instance_to_label_cost = self._scene_instance_map[scene]
-
+        instance_to_label_pos = self._scene_instance_map[scene]
         sem_img_height, sem_img_width = obs["semantic"].shape[:2]
 
         goal_mask_img = np.zeros((sem_img_height, sem_img_width, 1), dtype=bool)
-        for instance_id, (label, dist) in instance_to_label_cost.items():
+        for instance_id, (label, dist) in instance_to_label_pos.items():
             if label == goal:
                 mask = obs["semantic"] == instance_id
                 goal_mask_img[mask] = True
 
         if (scene, goal) not in self._shortest_path_maps:
             self._shortest_path_maps[(scene, goal)] = self._get_shortest_path_map(
-                instance_to_label_cost, goal, envs, env_idx
+                instance_to_label_pos, goal, envs, env_idx
             )
 
         gt_costmap = self._get_geodesic_distance_costmap(
@@ -690,20 +691,20 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         return goal_mask_img, gt_costmap
 
     def _get_shortest_path_map(
-        self, instance_to_label_cost, goal, envs, env_idx, use_log_costs=True
+        self, instance_to_label_pos, goal, envs, env_idx, use_log_costs=True
     ):
         goal_positions = [
-            pos for label, pos in instance_to_label_cost.values() if goal in label
+            pos for label, pos in instance_to_label_pos.values() if goal in label
         ]
         if not goal_positions:
-            with open("missing_goald.txt", "a") as f:
+            with open("missing_goal.txt", "a") as f:
                 f.write(
                     f"No goal positions found for {goal} in scene {envs.current_episodes()[env_idx].scene_id}\n"
                 )
                 f.write(
-                    f"Labels: {list(label for label, cost in instance_to_label_cost.values())}"
+                    f"Labels: {list(label for label, cost in instance_to_label_pos.values())}"
                 )
-            return {instance: 1.0 for instance in instance_to_label_cost}
+            return {instance: 1.0 for instance in instance_to_label_pos}
 
         instance_to_cost = {
             instance_id: (
@@ -715,7 +716,7 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
                 if goal not in label
                 else 0.0
             )
-            for instance_id, (label, pos) in instance_to_label_cost.items()
+            for instance_id, (label, pos) in instance_to_label_pos.items()
         }
 
         if use_log_costs:
@@ -732,12 +733,19 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
             semantic_img, instance_to_cost, env_idx
         )
 
+        # print(f"{np.unique(normalised_instance_to_cost.values())=}")
+        # print(f"{np.unique(semantic_img)=}")
+
+        costmap_img = np.ones_like(semantic_img, dtype=np.float32)
         # Map each instance_id in the semantic image to its cost (looping is faster
         # than the vectorised remapping):
         for k in np.unique(semantic_img):
-            semantic_img[semantic_img == k] = normalised_instance_to_cost.get(k, 1.0)
+            costmap_img[semantic_img == k] = normalised_instance_to_cost.get(k, 1.0)
 
-        return (semantic_img * 255).astype(np.uint8)
+        # print(f"{np.unique(costmap_img)=}")
+        # print(f"{np.unique((costmap_img * 255).astype(np.uint8))=}")
+
+        return (costmap_img * 255).astype(np.uint8)
 
     def _get_normalised_costs(
         self, semantic_img, instance_to_cost, env_idx, max_valid_cost=0.8
@@ -750,7 +758,7 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         if not np.isfinite(current_costs).any():
             # If all costs are invalid, return a map with all costs set to 1.0:
             return {instance: 1.0 for instance in current_instances}
-
+        
         max_frame_cost = max(cost for cost in current_costs if np.isfinite(cost))
 
         # Update the maximum cost encountered so far for this episode. This is to match
