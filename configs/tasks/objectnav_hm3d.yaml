@@ -72,6 +72,8 @@ TASK:
 DATASET:
   TYPE: ObjectNav-v2
   SPLIT: train
+  # DATA_PATH: "/home/dc/data/nav_datasets/objectnav/tasks/objectnav_hm3d_v1/{split}/{split}.json.gz"
+  # SCENES_DIR: "/home/dc/data/nav_datasets/objectnav/versioned_data/hm3d-1.0/"
   DATA_PATH: "data/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_v1/{split}/{split}.json.gz"
   SCENES_DIR: "data/scene_datasets/"
   MAX_EPISODE_STEPS: 500
@@ -79,6 +81,7 @@ DATASET:
   SPLIT_EPISODES: False
   SORT_BY_SCENE_AND_GOAL: False
   SUB_SPLIT_INDEX_PATH: null
+  FILTER_EXISTING_PATH: null
 
 SUB_SPLIT_GENERATOR:
   STRIDE: 10

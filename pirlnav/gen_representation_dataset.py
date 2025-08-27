@@ -1,9 +1,12 @@
 import copy
+import gzip
 import json
 import os
 import pickle
+import re
 import time
 import types
+import concurrent
 import cv2
 import einops
 import numpy as np
@@ -33,11 +36,14 @@ from habitat.core.registry import registry
 from scipy.spatial.transform import Rotation
 from PIL import Image
 
-# TODO: Temporary hack as these are not accessible as installable packages:
-sys.path.append("/storage/dc/sg/sg_habitat")
 from map_incremental import IncrementalMapper, SimIncrementalMapper
+
+# TODO: Temporary hack as these are not accessible as installable packages:
+# sys.path.append("/storage/dc/sg/sg_habitat")
+sys.path.append("/home/dc/sg_new/sg_habitat")
 from libs.experiments import model_loader
 from libs.matcher import lightglue as matcher_lg
+from scripts.exploration.create_training_maps import contract_da_edges
 
 
 # TODO: Change generator to return dict of tensors
@@ -154,33 +160,70 @@ class NoOpLookActionSpaceConfiguration(HabitatSimV0ActionSpaceConfiguration):
 
 class GraphDataStorage:
 
-    def __init__(self, output_path, episodes, **kwargs):
+    def __init__(self, output_path, episodes, num_workers=2, **kwargs):
         self._output_path = output_path
+        # self._should_save_caches = should_save_caches
+        # self._cache_save_interval_eps = cache_save_interval_eps
+
         self._completed_eps = []
 
-    def save_episode(self, data, scene_id, episode_id, object_category):
-        scene_id = scene_id.split("/")[-2]
-        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+        # self._pool = ProcessPoolExecutor(num_workers)
+        # self._futures = []
 
-        # Only save the final graphs:
+    def save_episode(self, data, scene_id, episode_id, object_category):
+        # Only save the final graphs and caches:
         data = data[-1]
 
-        graph_keys = [k for k in data.keys() if "graph" in k]
-        for k in graph_keys:
-            save_path = f"{self._output_path}/{ep_id}/{k}.pkl"
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, "wb") as f:
-                pickle.dump(data[k], f)
+        scene_id = scene_id.split("/")[-2]
+        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+        output_path = f"{self._output_path}/{ep_id}"
+
+        os.makedirs(output_path, exist_ok=True)
+
+        self._write_graphs(data, output_path)
+        # future = self._pool.submit(self._write_graphs, data, output_path)
+        # self._futures.append(future)
 
         self._completed_eps.append(ep_id)
         # Save the episode index in case of early termination:
         ep_index_path = f"{self._output_path}/ep_index.txt"
-        with open(ep_index_path, "w") as f:
+        with open(ep_index_path, "a") as f:
             for ep in self._completed_eps:
                 f.write(f"{ep}\n")
 
+        # try:
+        #     result = future.result()
+        # except Exception as e:
+        #     print(f"Task raised an exception: {e}")
+
+    @staticmethod
+    def _write_graphs(data, output_path):
+        graph_keys = [k for k in data.keys() if "graph" in k]
+        for k in graph_keys:
+            save_path = f"{output_path}/{k}.pkl.gz"
+            with gzip.open(save_path, "wb") as f:
+                pickle.dump(data[k], f)
+
+        # num_eps = len(self._completed_eps)
+        # if self._should_save_caches and num_eps % self._cache_save_interval_eps:
+        #     self._save_caches(data)
+
+    # def _save_caches(self, data):
+    #     # The cache is shared across all eps:
+    #     cache_keys = [k for k in data.keys() if "cache" in k]
+    #     for k in cache_keys:
+    #         save_path = f"{self._output_path}/{k}.pkl"
+    #         with open(save_path, "wb") as f:
+    #             pickle.dump(data[k], f)
+
     def close(self):
         pass
+        # for f in self._futures:
+        #     f.result()
+        # self._pool.shutdown()
+        # if self._should_save_caches:
+        #     # Save the final cache:
+        #     self._save_caches(self._last_data[-1])
 
 
 class ZarrDataStorage:
@@ -408,6 +451,25 @@ class RepresentationGenerator:
         with open(sub_split_index_path, "r") as f:
             sub_split_index = json.load(f)
 
+        filter_existing_path = config["TASK_CONFIG"]["DATASET"]["FILTER_EXISTING_PATH"]
+        if filter_existing_path is not None:
+            with open(filter_existing_path, "r") as f:
+                lines = f.readlines()
+            # The completed episode tracker uses a non-standard format:
+            matcher = re.compile(r"(.*)_(\d+)_(\w+)")
+            filter_eps = set(matcher.match(line).groups() for line in lines)
+
+            sub_split_index = [
+                ep
+                for ep in sub_split_index
+                if (
+                    ep["scene_id"].split("/")[-2],
+                    ep["episode_id"],
+                    ep["object_category"],
+                )
+                not in filter_eps
+            ]
+
         ep_keys = ["scene_id", "episode_id", "object_category", "length"]
         episodes = [{k: ep[k] for k in ep_keys} for ep in sub_split_index]
 
@@ -465,6 +527,8 @@ class RepresentationGenerator:
                 for i in range(self._num_envs)
             ]
 
+            t0 = time.perf_counter()
+
             step_data = self._generate_step(
                 previous_episodes,
                 actions,
@@ -503,6 +567,7 @@ class RepresentationGenerator:
                         pbar.update(1)
                     else:
                         print(f"Duplicate episode {ep_key} (skipping)")
+
                     ep.clear()
                     # This env is now on a new ep, so update its metadata:
                     previous_episodes[i] = self._envs.call_at(i, CURRENT_EPISODE_NAME)
@@ -777,13 +842,17 @@ class GroundTruthPerceptionGraphGenerator:
     def __init__(self, num_envs, **kwargs):
         self.data_names = ["gt_perception_graph"]
 
-        self._make_mapper_fn = lambda: SimIncrementalMapper()
+        self._make_mapper_fn = lambda: SimIncrementalMapper(
+            use_mask_rle=True, add_clip_mask_descriptors=False
+        )
 
         self._mappers = [None for _ in range(num_envs)]
         self._graphs = [None for _ in range(num_envs)]
+        # self._contracted_graphs = [None for _ in range(num_envs)]
 
         self._scene_object_centers = {}
-        self._label_descriptor_cache = {}
+        self._scene_instance_id_to_label_dist_cache = {}
+        # self._label_descriptor_cache = {}
 
     def generate(
         self,
@@ -806,66 +875,69 @@ class GroundTruthPerceptionGraphGenerator:
             zip(self._graphs, self._mappers, observations)
         ):
             scene = ep_metadata[i].scene_id.split("/")[-1]
+            if scene not in self._scene_object_centers:
+                self._scene_object_centers[scene] = envs.call_at(
+                    i, "get_object_centers"
+                )
+                self._scene_instance_id_to_label_dist_cache[scene] = envs.call_at(
+                    i, "get_semantic_instance_id_to_name_map"
+                )
             self._update_graph(
-                graph, mapper, obs["rgb"], obs["semantic"], obs["depth"], scene, envs, i
+                graph,
+                mapper,
+                obs["rgb"],
+                obs["semantic"],
+                obs["depth"],
+                self._scene_object_centers[scene],
+                self._scene_instance_id_to_label_dist_cache[scene],
             )
 
-        return {"gt_perception_graph": self._graphs}
+        # for i, future in enumerate(concurrent.futures.as_completed(futures)):
+        #     try:
+        #         self._graphs[i] = future.result()
+        #     except Exception as e:
+        #         print(f"Task raised an exception: {e}")
+        # print("WAITING ...")
+        # concurrent.futures.wait(futures)
+        # print("WAIT DONE")
+        # print(f"Graphs after {[len(g) for g in self._graphs]}")
 
-    def _update_graph(self, graph, mapper, rgb, semantic, depth, scene, envs, env_idx):
-        if scene not in self._scene_object_centers:
-            self._scene_object_centers[scene] = envs.call_at(
-                env_idx, "get_object_centers"
-            )
+        return {
+            "gt_perception_graph": self._graphs,
+            # "contracted_gt_perception_graph": self._contracted_graphs,
+            # "descriptor_cache": [self._label_descriptor_cache] * len(ep_metadata),
+        }
 
-        object_centers = self._scene_object_centers[scene]
-
+    @staticmethod
+    def _update_graph(
+        graph, mapper, rgb, semantic, depth, object_centers, instance_id_to_label_dist
+    ):
         semantic = semantic[..., 0]
         mapper.update(graph, object_centers, rgb, semantic, depth)
 
-        self._add_clip_embeddings(graph, mapper, envs, env_idx)
+        graph = GroundTruthPerceptionGraphGenerator._add_instance_labels(
+            graph, instance_id_to_label_dist
+        )
+        return graph
 
-    def _add_clip_embeddings(self, graph, mapper, envs, env_idx):
+    @staticmethod
+    def _add_instance_labels(graph, instance_id_to_label_dist):
         new_nodes = [
             (n, attr) for n, attr in graph.nodes(data=True) if "label" not in attr
         ]
 
-        instance_id_to_label_dist = envs.call_at(
-            env_idx, "get_semantic_instance_id_to_name_map"
-        )
-        instance_id_to_label = {k: v[0] for k, v in instance_id_to_label_dist.items()}
-
         labels = [
-            instance_id_to_label.get(attr["instance_id"], "unknown")
+            instance_id_to_label_dist.get(attr["instance_id"], "unknown")[0]
             for n, attr in new_nodes
         ]
-
-        for label in labels:
-            if label not in self._label_descriptor_cache:
-                self._label_descriptor_cache[label] = (
-                    mapper.descriptor_generator.get_text_descriptors([label])[0]
-                )
-
-        # TODO: Storing all CLIP labels uses too much space. Can store the cache
-        # at the end instead, or generate over contracted graphs when loading the
-        # dataset:
-        # labels_clip = [self._label_descriptor_cache[label] for label in labels]
-
         goal_labels = [OBJECTNAV_GOAL_REMAPPING.get(label) for label in labels]
 
         for (n, attr), label, goal_label in zip(new_nodes, labels, goal_labels):
             attr["label"] = label
-            # attr["label_clip"] = label_clip
-
             if goal_label:
                 attr["goal_label"] = goal_label
-                # if goal_label not in self._label_descriptor_cache:
-                #     self._label_descriptor_cache[goal_label] = (
-                #         mapper.descriptor_generator.get_text_descriptors([goal_label])[
-                #             0
-                #         ]
-                #     )
-                # attr["goal_label_clip"] = self._label_descriptor_cache[goal_label]
+
+        return graph
 
 
 class CostmapImageGenerator:
