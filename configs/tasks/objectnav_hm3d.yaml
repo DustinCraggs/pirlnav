@@ -100,9 +100,9 @@ REPRESENTATION_GENERATOR:
     # clip:
     #   use_float16: True
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
-    # ground_truth_costmap:
-    #   resize_and_crop_to: 128
-    ground_truth_perception_graph:
+    ground_truth_costmap:
+      resize_and_crop_to: 128
+    # ground_truth_perception_graph:
   data_storage:
     output_path: /storage/dc/pvr_data/default
     # Zarr:
@@ -123,8 +123,10 @@ PVR:
   # pvr_keys: ["rgb"]
   # pvr_keys: ["last_hidden_layer_pooled", "cls"]
   # pvr_keys: ["last_two_hidden_layers"]
+  # pvr_keys: ["goal_costmap"]
+  pvr_keys: ["gt_costmap"]
   # pvr_keys: ["rgb", "goal_costmap"]
-  pvr_keys: ["rgb", "gt_costmap"]
+  # pvr_keys: ["rgb", "gt_costmap"]
   # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
   non_visual_keys: ["done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "cls"]

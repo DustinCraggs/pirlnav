@@ -59,7 +59,11 @@ from torch.utils.data import DataLoader
 
 from pirlnav.algos.agent import DDPILAgent, ILAgent
 from pirlnav.common.rollout_storage import RolloutStorage
-from pirlnav.gen_representation_dataset import RepresentationGenerator, get_data_generators
+from pirlnav.gen_representation_dataset import (
+    CustomEnv,
+    RepresentationGenerator,
+    get_data_generators,
+)
 from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_pvr_dataset
 from pirlnav.utils.env_utils import construct_envs
 from pirlnav.utils.utils import SimpleProfiler
@@ -274,7 +278,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         observation_space = self._obs_space
         self.obs_transforms = get_active_obs_transforms(self.config)
-        print(f"{self.obs_transforms=}")
+
         observation_space = apply_obs_transforms_obs_space(
             observation_space, self.obs_transforms
         )
@@ -307,7 +311,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             entropy_coef=il_cfg.entropy_coef,
         )
 
-    def _init_envs(self, config=None, shuffle_scenes: bool = True) -> None:
+    def _init_envs(
+        self, config=None, shuffle_scenes: bool = True, env_cls=None
+    ) -> None:
         if config is None:
             config = self.config
 
@@ -317,9 +323,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             with open(sub_split_index_path, "r") as f:
                 sub_split_index = json.load(f)
 
+        env_cls = env_cls or get_env_class(config.ENV_NAME)
+
         self.envs = construct_envs(
             config,
-            get_env_class(config.ENV_NAME),
+            env_cls,
             workers_ignore_signals=is_slurm_batch_job(),
             shuffle_scenes=shuffle_scenes,
             episode_index=sub_split_index,
@@ -760,7 +768,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         if config.VERBOSE:
             logger.info(f"env config: {config}")
 
-        self._init_envs(config, shuffle_scenes=False)
+        self._init_envs(config, shuffle_scenes=False, env_cls=CustomEnv)
 
         action_space = self.action_space
         if self.using_velocity_ctrl:
@@ -792,6 +800,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 }
             )
         self.actor_critic = self.agent.actor_critic
+
+        self.actor_critic.eval()
 
         observations = self.envs.reset()
         batch = batch_obs(
@@ -842,10 +852,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 logger.warn(f"Evaluating with {total_num_eps} instead.")
                 number_of_eval_episodes = total_num_eps
 
-        # Make representation generator:
-        data_generator = get_data_generators(config)[0]
-
-        rewards, dones, infos = None, None, None
+        rewards, infos = None, None
+        dones = [True for _ in range(config.NUM_ENVIRONMENTS)]
 
         current_episodes = self.envs.current_episodes()
 
@@ -853,35 +861,30 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         logger.info("Sampling actions deterministically...")
         self.actor_critic.eval()
 
-        c = 0
+        # Make representation generator:
+        data_generator = get_data_generators(config, config.NUM_ENVIRONMENTS)[0]
+
+        profiler.enter("generate_pvrs")
+        batch = self.add_pvrs_to_batch(
+            batch,
+            data_generator,
+            current_episodes,
+            prev_actions,
+            observations,
+            rewards,
+            dones,
+            infos,
+            pvr_keys=self.config.TASK_CONFIG.PVR.pvr_keys,
+        )
+        profiler.exit("generate_pvrs")
+
         # while True:
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
             profiler.enter("entire_eval_iter")
-            profiler.enter("generate_pvrs")
-            # Add PVR to batch:
-            pvrs = data_generator.generate(
-                None,
-                observations,
-                rewards,
-                dones,
-                infos,
-                None,
-                None,
-                return_tensors=True,
-            )
-            pvrs = dict(zip(data_generator.data_names, pvrs))
-
-            for k in config.TASK_CONFIG.PVR.pvr_keys:
-                batch[k] = pvrs[k]
-
-            profiler.exit("generate_pvrs")
             profiler.enter("get_actions")
 
             with torch.no_grad():
-                (
-                    actions,
-                    test_recurrent_hidden_states,
-                ) = self.actor_critic.act(
+                actions, test_recurrent_hidden_states = self.actor_critic.act(
                     batch,
                     test_recurrent_hidden_states,
                     prev_actions,
@@ -943,12 +946,25 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             )
             profiler.exit("not_done_masks")
 
-            profiler.enter("process_rewards")
             rewards = torch.tensor(
                 rewards_l, dtype=torch.float, device="cpu"
             ).unsqueeze(1)
             current_episode_reward += rewards
-            profiler.exit("process_rewards")
+
+            profiler.enter("generate_pvrs")
+            batch = self.add_pvrs_to_batch(
+                batch,
+                data_generator,
+                current_episodes,
+                prev_actions,
+                observations,
+                rewards,
+                dones,
+                infos,
+                pvr_keys=self.config.TASK_CONFIG.PVR.pvr_keys,
+            )
+            profiler.exit("generate_pvrs")
+
             # profiler.enter("get_current_episodes_2")
             # next_episodes = self.envs.current_episodes(profiler)
             # profiler.exit("get_current_episodes_2")
@@ -1015,7 +1031,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 if len(self.config.VIDEO_OPTION) > 0:
                     # TODO move normalization / channel changing out of the policy and undo it here
                     frame = observations_to_image(
-                        {k: v[i] for k, v in batch.items()}, infos[i]
+                        {k: v[i] for k, v in batch.items()},
+                        infos[i],
+                        extra_sensors=config.POLICY.RGB_ENCODER.costmap_names,
                     )
                     if self.config.VIDEO_RENDER_ALL_INFO:
                         frame = overlay_frame(frame, infos[i])
@@ -1078,6 +1096,40 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             writer.add_scalar(f"eval_metrics/{k}", v, step_id)
 
         self.envs.close()
+
+    def add_pvrs_to_batch(
+        self,
+        batch,
+        data_generator,
+        current_episodes,
+        prev_actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        pvr_keys,
+    ):
+        # Add PVR to batch:
+        pvrs = data_generator.generate(
+            current_episodes,
+            prev_actions,
+            observations,
+            rewards,
+            dones,
+            infos,
+            self.envs,
+            None,
+            # return_tensors=True,
+        )
+        # pvrs = dict(zip(data_generator.data_names, pvrs))
+
+        for k in pvr_keys:
+            pvr = pvrs[k]
+            if isinstance(pvr, list):
+                batch[k] = torch.stack(pvrs[k]).to(self.device)
+            else:
+                batch[k] = pvrs[k].to(self.device)
+        return batch
 
     def log_running_eval_stats(self, stats_episodes, writer, profiler=None):
         # Write intermediate stats:

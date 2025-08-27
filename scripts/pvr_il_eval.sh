@@ -21,6 +21,7 @@ echo "In ObjectNav IL DDP"
 python -u -m run \
     --exp-config $config \
     --run-type eval \
+    --seed 1000 \
     EVAL_CKPT_PATH_DIR $EVAL_CHECKPOINT_DIR \
     WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
@@ -28,8 +29,9 @@ python -u -m run \
     VIDEO_DIR "$DATA_DIR/videos/$GROUP_NAME/$EXP_NAME" \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \
-    NUM_ENVIRONMENTS 20 \
+    NUM_ENVIRONMENTS 10 \
     EVAL.SPLIT "val" \
+    EVAL.USE_CKPT_CONFIG False \
     TASK_CONFIG.DATASET.TYPE "ObjectNav-v1" \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
@@ -38,7 +40,9 @@ python -u -m run \
     POLICY.PVR_ENCODER.num_layers 2 \
     POLICY.PVR_ENCODER.dropout 0.1 \
     POLICY.SEQ2SEQ.use_prev_action True \
-    TASK_CONFIG.PVR.use_pvr_encoder True \
+    POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
+    TASK_CONFIG.PVR.use_pvr_encoder False \
+    POLICY.RGB_ENCODER.input_channels 4 \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path None \
     # TASK_CONFIG.PVR.use_fixed_size_embedding True \
