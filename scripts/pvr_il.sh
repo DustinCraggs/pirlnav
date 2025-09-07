@@ -55,12 +55,13 @@ python -u -m torch.distributed.run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 3 \
+    POLICY.RGB_ENCODER.input_channels 4 \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
+    POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     # POLICY.STATE_ENCODER.hidden_size 128 \
     # NUM_UPDATES 102000 \
     # NUM_ENVIRONMENTS 4 \

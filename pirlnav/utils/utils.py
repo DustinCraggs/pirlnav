@@ -50,6 +50,23 @@ def load_encoder(encoder, path):
     if isinstance(encoder.backbone, ResNet):
         state_dict = torch.load(path, map_location="cpu")["teacher"]
         state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+
+        # Print shapes recursively
+        # print("\n".join([f"{k}: {v.shape}" for k, v in encoder.state_dict().items()]))
+        # print("\n".join([f"{k}: {v.shape}" for k, v in state_dict.items()]))
+
+        # expand backbone.conv1.weight if input channels do not match
+        input_channels = encoder.backbone.conv1.weight.shape[1]
+        if input_channels > 3:
+            print("Expanding backbone.conv1.weight to match {input_channels=}")
+            conv1_weight = state_dict["backbone.conv1.weight"]
+            input_channels = encoder.backbone.conv1.weight.shape[1]
+            num_new_channels = input_channels - 3
+            # Arbitrarily use the first channel to initialize the new channels:
+            new_channels = conv1_weight[:, :1, :, :].repeat(1, num_new_channels, 1, 1)
+            conv1_weight = torch.cat([conv1_weight, new_channels], dim=1)
+            state_dict["backbone.conv1.weight"] = conv1_weight
+
         return encoder.load_state_dict(state_dict=state_dict, strict=False)
     else:
         raise ValueError("unknown encoder backbone")

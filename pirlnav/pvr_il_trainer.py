@@ -184,13 +184,18 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             iter(self._pvr_dataloader) for self._pvr_dataloader in pvr_dataloaders
         ]
 
-        example_batch = next(iter(pvr_dataloaders[0]))
-        pvr_shapes = {k: example_batch[k].shape for k in pvr_config.pvr_keys}
+        # example_batch = next(iter(pvr_dataloaders[0]))
+        # pvr_shapes = {k: example_batch[k].shape for k in pvr_config.pvr_keys}
+        pvr_shapes = {k: (256, 256) for k in pvr_config.pvr_keys}
 
         nv_dataset = zarr.open(pvr_config.non_visual_obs_data_path, mode="r")
         num_goals = max(nv_dataset["data"]["objectgoal"]) + 1
         self._obs_space = self._make_observation_space(pvr_shapes, num_goals)
-        self._pvr_token_dim = pvr_shapes[pvr_config.pvr_keys[0]][-1]
+
+        if pvr_config.pvr_keys:
+            self._pvr_token_dim = pvr_shapes[pvr_config.pvr_keys[0]][-1]
+        else:
+            self._pvr_token_dim = None
 
     def _sample_next_batch(self):
         samples = []
@@ -862,21 +867,23 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         self.actor_critic.eval()
 
         # Make representation generator:
-        data_generator = get_data_generators(config, config.NUM_ENVIRONMENTS)[0]
+        pvr_keys = self.config.TASK_CONFIG.PVR.pvr_keys
 
-        profiler.enter("generate_pvrs")
-        batch = self.add_pvrs_to_batch(
-            batch,
-            data_generator,
-            current_episodes,
-            prev_actions,
-            observations,
-            rewards,
-            dones,
-            infos,
-            pvr_keys=self.config.TASK_CONFIG.PVR.pvr_keys,
-        )
-        profiler.exit("generate_pvrs")
+        if pvr_keys:
+            data_generator = get_data_generators(config, config.NUM_ENVIRONMENTS)[0]
+            profiler.enter("generate_pvrs")
+            batch = self.add_pvrs_to_batch(
+                batch,
+                data_generator,
+                current_episodes,
+                prev_actions,
+                observations,
+                rewards,
+                dones,
+                infos,
+                pvr_keys=pvr_keys,
+            )
+            profiler.exit("generate_pvrs")
 
         # while True:
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
@@ -951,19 +958,20 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             ).unsqueeze(1)
             current_episode_reward += rewards
 
-            profiler.enter("generate_pvrs")
-            batch = self.add_pvrs_to_batch(
-                batch,
-                data_generator,
-                current_episodes,
-                prev_actions,
-                observations,
-                rewards,
-                dones,
-                infos,
-                pvr_keys=self.config.TASK_CONFIG.PVR.pvr_keys,
-            )
-            profiler.exit("generate_pvrs")
+            if pvr_keys:
+                profiler.enter("generate_pvrs")
+                batch = self.add_pvrs_to_batch(
+                    batch,
+                    data_generator,
+                    current_episodes,
+                    prev_actions,
+                    observations,
+                    rewards,
+                    dones,
+                    infos,
+                    pvr_keys=pvr_keys,
+                )
+                profiler.exit("generate_pvrs")
 
             # profiler.enter("get_current_episodes_2")
             # next_episodes = self.envs.current_episodes(profiler)
