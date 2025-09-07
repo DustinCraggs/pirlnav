@@ -79,6 +79,7 @@ DATASET:
   SPLIT_EPISODES: False
   SORT_BY_SCENE_AND_GOAL: False
   SUB_SPLIT_INDEX_PATH: null
+  FILTER_EXISTING_PATH: null
 
 SUB_SPLIT_GENERATOR:
   STRIDE: 10
@@ -90,8 +91,8 @@ REPRESENTATION_GENERATOR:
   skip_look_actions: False
   generate_skip_index: False
   data_generators:
-    raw_image:
-      resize_and_crop_to: 256
+    # raw_image:
+    #   resize_and_crop_to: 256
     # agent_state:
     # non_visual:
     # clip:
@@ -100,10 +101,13 @@ REPRESENTATION_GENERATOR:
     # ground_truth_costmap:
     #   resize_and_crop_to: 128
     # ground_truth_perception_graph:
+    predicted_costmap:
+      model_path: "/home/dc/data/nav_experiments/cost_predictor/test_objectnav_20250902_165511/epoch_319.pth"
+      edge_weight_name: "e3d"
   data_storage:
     output_path: /storage/dc/pvr_data/default
-    # name: "graph"
-    name: "zarr"
+    name: "graph"
+    # name: "zarr"
     # name: "nomad"
     kwargs:
       batch_chunk_size: 1000
@@ -115,11 +119,13 @@ PVR:
   pvr_data_path: "pvr_data/one_percent_two/clip_data"
   non_visual_obs_data_path: "pvr_data/one_percent/non_visual_data"
   # pvr_keys: ["cls"]
+  # pvr_keys: []
   # pvr_keys: ["rgb"]
   # pvr_keys: ["last_hidden_layer_pooled", "cls"]
   # pvr_keys: ["last_two_hidden_layers"]
   # pvr_keys: ["goal_costmap"]
-  pvr_keys: ["gt_costmap"]
+  # pvr_keys: ["gt_costmap"]
+  pvr_keys: ["predicted_costmap"]
   # pvr_keys: ["rgb", "goal_costmap"]
   # pvr_keys: ["rgb", "gt_costmap"]
   # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
@@ -130,4 +136,5 @@ PVR:
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_hidden_layer_pooled", "cls"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "goal_costmap"]
-  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "gt_costmap"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "gt_costmap"]
+  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "predicted_costmap"]

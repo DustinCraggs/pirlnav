@@ -25,6 +25,24 @@ Read more in the [paper]().
 
 ## Installation
 
+New:
+
+```
+git submodule update --init
+
+conda create -n pirlnav python=3.10 cmake=3.14.0
+
+# Uninstall any other versions of habitat_sim or habitat-lab
+
+cd habitat-sim/
+pip install -r requirements.txt
+python setup.py install --headless
+
+pip install -r habitat-lab/habitat_baselines/il/requirements.txt
+
+pip install zarr
+```
+
 Run the following commands:
 
 ```

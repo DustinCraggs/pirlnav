@@ -1,9 +1,14 @@
+from collections import defaultdict
 import copy
+import gzip
 import json
 import os
 import pickle
+import re
 import time
+import traceback
 import types
+import concurrent
 import cv2
 import einops
 import numpy as np
@@ -33,15 +38,23 @@ from habitat.core.registry import registry
 from scipy.spatial.transform import Rotation
 from PIL import Image
 
-# TODO: Temporary hack as these are not accessible as installable packages:
-sys.path.append("/storage/dc/sg/sg_habitat")
 from map_incremental import IncrementalMapper, SimIncrementalMapper
-from libs.experiments import model_loader
-from libs.matcher import lightglue as matcher_lg
+
+# TODO: Temporary hack as these are not accessible as installable packages:
+# sys.path.append("/storage/dc/sg/sg_habitat")
+sys.path.append("/home/dc/sg_new/sg_habitat")
+from scripts.exploration.models import load_checkpoint
+from scripts.exploration.descriptor_generator import ClipDescriptorGenerator
+from libs.planner_global.plan_topo import predict_path_lengths
+
+# from libs.experiments import model_loader
+# from libs.matcher import lightglue as matcher_lg
+# from scripts.exploration.create_training_maps import contract_da_edges
 
 
-# TODO: Change generator to return dict of tensors
+# TODO: Change generator to return dict of tensors?
 # TODO: DataClass to hold the data and metadata for each episode step
+# TODO: Consistent json ep index output and filtering of already-completed episodes
 OBJECTNAV_GOAL_REMAPPING = {
     "chair": "chair",
     "bed": "bed",
@@ -70,7 +83,7 @@ def get_data_generators(config, num_envs):
         "raw_image": RawImageGenerator,
         "ground_truth_costmap": GroundTruthCostmapImageGenerator,
         "ground_truth_perception_graph": GroundTruthPerceptionGraphGenerator,
-        "costmaps": CostmapImageGenerator,
+        "predicted_costmap": PredictedCostmapImageGenerator,
         "clip": ClipGenerator,
         "vc_1": Vc1Generator,
         "cogvlm2": CogVlmGenerator,
@@ -154,34 +167,71 @@ class NoOpLookActionSpaceConfiguration(HabitatSimV0ActionSpaceConfiguration):
 
 class GraphDataStorage:
 
-    def __init__(self, output_path, episodes, **kwargs):
+    def __init__(self, output_path, episodes, num_workers=2, **kwargs):
         self._output_path = output_path
+        # self._should_save_caches = should_save_caches
+        # self._cache_save_interval_eps = cache_save_interval_eps
+
         self._completed_eps = []
 
-    def save_episode(self, data, scene_id, episode_id, object_category):
-        scene_id = scene_id.split("/")[-2]
-        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+        # self._pool = ProcessPoolExecutor(num_workers)
+        # self._futures = []
 
-        # Only save the final graphs:
+    def save_episode(self, data, scene_id, episode_id, object_category):
+        # Only save the final graphs and caches:
         data = data[-1]
 
-        graph_keys = [k for k in data.keys() if "graph" in k]
-        for k in graph_keys:
-            save_path = f"{self._output_path}/{ep_id}/{k}.pkl"
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, "wb") as f:
-                pickle.dump(data[k], f)
+        scene_id = scene_id.split("/")[-2]
+        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+        output_path = f"{self._output_path}/{ep_id}"
+
+        os.makedirs(output_path, exist_ok=True)
+
+        self._write_graphs(data, output_path)
+        # future = self._pool.submit(self._write_graphs, data, output_path)
+        # self._futures.append(future)
 
         self._completed_eps.append(ep_id)
 
         # Save the episode index in case of early termination:
         ep_index_path = f"{self._output_path}/ep_index.txt"
-        with open(ep_index_path, "w") as f:
+        with open(ep_index_path, "a") as f:
             for ep in self._completed_eps:
                 f.write(f"{ep}\n")
 
+        # try:
+        #     result = future.result()
+        # except Exception as e:
+        #     print(f"Task raised an exception: {e}")
+
+    @staticmethod
+    def _write_graphs(data, output_path):
+        graph_keys = [k for k in data.keys() if "graph" in k]
+        for k in graph_keys:
+            save_path = f"{output_path}/{k}.pkl.gz"
+            with gzip.open(save_path, "wb") as f:
+                pickle.dump(data[k], f)
+
+        # num_eps = len(self._completed_eps)
+        # if self._should_save_caches and num_eps % self._cache_save_interval_eps:
+        #     self._save_caches(data)
+
+    # def _save_caches(self, data):
+    #     # The cache is shared across all eps:
+    #     cache_keys = [k for k in data.keys() if "cache" in k]
+    #     for k in cache_keys:
+    #         save_path = f"{self._output_path}/{k}.pkl"
+    #         with open(save_path, "wb") as f:
+    #             pickle.dump(data[k], f)
+
     def close(self):
         pass
+        # for f in self._futures:
+        #     f.result()
+        # self._pool.shutdown()
+        # if self._should_save_caches:
+        #     # Save the final cache:
+        #     self._save_caches(self._last_data[-1])
 
 
 class ZarrDataStorage:
@@ -269,7 +319,7 @@ class ZarrDataStorage:
 class NomadDataStorage:
 
     def __init__(
-        self, output_path, episodes, num_workers=20, save_waypoint_plot=False, **kwargs
+        self, output_path, episodes, num_workers=10, save_waypoint_plot=False, **kwargs
     ):
         self._output_path = output_path
         self._completed_eps = []
@@ -318,19 +368,27 @@ class NomadDataStorage:
 
     @staticmethod
     def _write_traj_data(save_dir, rgb_data, agent_states, positions, yaws):
-        os.makedirs(f"{save_dir}/images/", exist_ok=True)
+        try:
+            os.makedirs(f"{save_dir}/images/", exist_ok=True)
 
-        images = [Image.fromarray(arr) for arr in rgb_data]
-        for i, img in enumerate(images):
-            img.save(f"{save_dir}/images/{i}.png")
+            images = [Image.fromarray(arr) for arr in rgb_data]
+            for i, img in enumerate(images):
+                img.save(f"{save_dir}/images/{i}.png")
 
-        np.save(f"{save_dir}/agent_states.npy", agent_states)
+            np.save(f"{save_dir}/agent_states.npy", agent_states)
 
-        traj_data = {
-            "position": positions,
-            "yaw": yaws,
-        }
-        pickle.dump(traj_data, open(f"{save_dir}/traj_data.pkl", "wb"))
+            traj_data = {
+                "position": positions,
+                "yaw": yaws,
+            }
+            pickle.dump(traj_data, open(f"{save_dir}/traj_data.pkl", "wb"))
+        except Exception as e:
+            print(f"Error saving episode to {save_dir}: {e}")
+            with open(f"{save_dir}/error.txt", "w") as f:
+                f.write(str(e))
+                # Save stack trace:
+                f.write("\n")
+                f.write(traceback.format_exc())
 
     @staticmethod
     def plot_traj(save_dir, positions, yaws):
@@ -410,6 +468,25 @@ class RepresentationGenerator:
         with open(sub_split_index_path, "r") as f:
             sub_split_index = json.load(f)
 
+        filter_existing_path = config["TASK_CONFIG"]["DATASET"]["FILTER_EXISTING_PATH"]
+        if filter_existing_path is not None:
+            with open(filter_existing_path, "r") as f:
+                lines = f.readlines()
+            # The completed episode tracker uses a non-standard format:
+            matcher = re.compile(r"(.*)_(\d+)_(\w+)")
+            filter_eps = set(matcher.match(line).groups() for line in lines)
+
+            sub_split_index = [
+                ep
+                for ep in sub_split_index
+                if (
+                    ep["scene_id"].split("/")[-2],
+                    ep["episode_id"],
+                    ep["object_category"],
+                )
+                not in filter_eps
+            ]
+
         ep_keys = ["scene_id", "episode_id", "object_category", "length"]
         episodes = [{k: ep[k] for k in ep_keys} for ep in sub_split_index]
 
@@ -467,6 +544,8 @@ class RepresentationGenerator:
                 for i in range(self._num_envs)
             ]
 
+            t0 = time.perf_counter()
+
             step_data = self._generate_step(
                 previous_episodes,
                 actions,
@@ -505,6 +584,7 @@ class RepresentationGenerator:
                         pbar.update(1)
                     else:
                         print(f"Duplicate episode {ep_key} (skipping)")
+
                     ep.clear()
                     # This env is now on a new ep, so update its metadata:
                     previous_episodes[i] = self._envs.call_at(i, CURRENT_EPISODE_NAME)
@@ -733,17 +813,11 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
             semantic_img, instance_to_cost, env_idx
         )
 
-        # print(f"{np.unique(normalised_instance_to_cost.values())=}")
-        # print(f"{np.unique(semantic_img)=}")
-
         costmap_img = np.ones_like(semantic_img, dtype=np.float32)
         # Map each instance_id in the semantic image to its cost (looping is faster
         # than the vectorised remapping):
         for k in np.unique(semantic_img):
             costmap_img[semantic_img == k] = normalised_instance_to_cost.get(k, 1.0)
-
-        # print(f"{np.unique(costmap_img)=}")
-        # print(f"{np.unique((costmap_img * 255).astype(np.uint8))=}")
 
         return (costmap_img * 255).astype(np.uint8)
 
@@ -758,7 +832,7 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         if not np.isfinite(current_costs).any():
             # If all costs are invalid, return a map with all costs set to 1.0:
             return {instance: 1.0 for instance in current_instances}
-        
+
         max_frame_cost = max(cost for cost in current_costs if np.isfinite(cost))
 
         # Update the maximum cost encountered so far for this episode. This is to match
@@ -785,13 +859,15 @@ class GroundTruthPerceptionGraphGenerator:
     def __init__(self, num_envs, **kwargs):
         self.data_names = ["gt_perception_graph"]
 
-        self._make_mapper_fn = lambda: SimIncrementalMapper()
+        self._make_mapper_fn = lambda: SimIncrementalMapper(
+            use_mask_rle=True, add_clip_mask_descriptors=False
+        )
 
         self._mappers = [None for _ in range(num_envs)]
         self._graphs = [None for _ in range(num_envs)]
 
         self._scene_object_centers = {}
-        self._label_descriptor_cache = {}
+        self._scene_instance_id_to_label_dist_cache = {}
 
     def generate(
         self,
@@ -814,116 +890,91 @@ class GroundTruthPerceptionGraphGenerator:
             zip(self._graphs, self._mappers, observations)
         ):
             scene = ep_metadata[i].scene_id.split("/")[-1]
+            if scene not in self._scene_object_centers:
+                self._scene_object_centers[scene] = envs.call_at(
+                    i, "get_object_centers"
+                )
+                self._scene_instance_id_to_label_dist_cache[scene] = envs.call_at(
+                    i, "get_semantic_instance_id_to_name_map"
+                )
             self._update_graph(
-                graph, mapper, obs["rgb"], obs["semantic"], obs["depth"], scene, envs, i
+                graph,
+                mapper,
+                obs["rgb"],
+                obs["semantic"],
+                obs["depth"],
+                self._scene_object_centers[scene],
+                self._scene_instance_id_to_label_dist_cache[scene],
             )
 
-        return {"gt_perception_graph": self._graphs}
+        return {
+            "gt_perception_graph": self._graphs,
+            # "contracted_gt_perception_graph": self._contracted_graphs,
+            # "descriptor_cache": [self._label_descriptor_cache] * len(ep_metadata),
+        }
 
-    def _update_graph(self, graph, mapper, rgb, semantic, depth, scene, envs, env_idx):
-        if scene not in self._scene_object_centers:
-            self._scene_object_centers[scene] = envs.call_at(
-                env_idx, "get_object_centers"
-            )
-
-        object_centers = self._scene_object_centers[scene]
-
+    @staticmethod
+    def _update_graph(
+        graph, mapper, rgb, semantic, depth, object_centers, instance_id_to_label_dist
+    ):
         semantic = semantic[..., 0]
         mapper.update(graph, object_centers, rgb, semantic, depth)
 
-        self._add_clip_embeddings(graph, mapper, envs, env_idx)
+        graph = GroundTruthPerceptionGraphGenerator._add_instance_labels(
+            graph, instance_id_to_label_dist
+        )
+        return graph
 
-    def _add_clip_embeddings(self, graph, mapper, envs, env_idx):
+    @staticmethod
+    def _add_instance_labels(graph, instance_id_to_label_dist):
         new_nodes = [
             (n, attr) for n, attr in graph.nodes(data=True) if "label" not in attr
         ]
 
-        instance_id_to_label_dist = envs.call_at(
-            env_idx, "get_semantic_instance_id_to_name_map"
-        )
-        instance_id_to_label = {k: v[0] for k, v in instance_id_to_label_dist.items()}
-
         labels = [
-            instance_id_to_label.get(attr["instance_id"], "unknown")
+            instance_id_to_label_dist.get(attr["instance_id"], "unknown")[0]
             for n, attr in new_nodes
         ]
-
-        for label in labels:
-            if label not in self._label_descriptor_cache:
-                self._label_descriptor_cache[label] = (
-                    mapper.descriptor_generator.get_text_descriptors([label])[0]
-                )
-
-        # TODO: Storing all CLIP labels uses too much space. Can store the cache
-        # at the end instead, or generate over contracted graphs when loading the
-        # dataset:
-        # labels_clip = [self._label_descriptor_cache[label] for label in labels]
-
         goal_labels = [OBJECTNAV_GOAL_REMAPPING.get(label) for label in labels]
 
         for (n, attr), label, goal_label in zip(new_nodes, labels, goal_labels):
             attr["label"] = label
-            # attr["label_clip"] = label_clip
-
             if goal_label:
                 attr["goal_label"] = goal_label
-                # if goal_label not in self._label_descriptor_cache:
-                #     self._label_descriptor_cache[goal_label] = (
-                #         mapper.descriptor_generator.get_text_descriptors([goal_label])[
-                #             0
-                #         ]
-                #     )
-                # attr["goal_label_clip"] = self._label_descriptor_cache[goal_label]
+
+        return graph
 
 
-class CostmapImageGenerator:
+class PredictedCostmapImageGenerator:
 
     def __init__(
         self,
         num_envs,
-        rgb_width,
-        rgb_height,
-        hfov,
-        costmap_width,
-        costmap_height,
-        use_gt_perception=False,
+        model_path,
+        edge_weight_name,
+        costed_segment_max=0.8,
+        max_seq_len=300,
         **kwargs,
     ):
-        self._costmap_width = costmap_width
-        self._costmap_height = costmap_height
-        self._use_gt_perception = use_gt_perception
+        self._edge_weight_name = edge_weight_name
+        self._costed_segment_max = costed_segment_max
+        self._max_seq_len = max_seq_len
 
-        if use_gt_perception:
-            self.data_names = ["gt_costmap"]
+        # TODO: Support different graph generators
+        self._graph_generator = GroundTruthPerceptionGraphGenerator(num_envs)
+        self._descriptor_generator = ClipDescriptorGenerator()
+        self._cost_predictor, train_config = load_checkpoint(model_path)
+        self._cost_predictor.eval()
 
-            self._make_mapper_fn = lambda: SimIncrementalMapper(
-                rgb_width, rgb_height, hfov
-            )
-        else:
-            self.data_names = ["predicted_costmap"]
+        self._goal_attributes = train_config.dataset.goal_attributes
+        self._node_attributes = train_config.dataset.node_attributes
 
-            segmentor = model_loader.get_segmentor(
-                "fast_sam", rgb_width, rgb_height, "cuda"
-            )
-            matcher = matcher_lg.MatchLightGlue(
-                rgb_width, rgb_height, cfg={"match_area": True}
-            )
-            depth_model = model_loader.get_depth_model()
+        self.data_names = ["predicted_costmap"]
 
-            self._make_mapper_fn = lambda: IncrementalMapper(
-                segmentor,
-                matcher,
-                depth_model,
-                text_labels=[],
-                add_clip_embeddings=True,
-                matching_window_size=3,
-                matching_top_k=None,
-            )
+        # TODO: Create cachedict class?
+        self._goal_descriptor_cache = {}
+        self._visual_descriptor_cache = [{} for _ in range(num_envs)]
 
-        self._mappers = [None for _ in range(num_envs)]
-        self._graphs = [None for _ in range(num_envs)]
-
-    @torch.no_grad()
     def generate(
         self,
         ep_metadata,
@@ -934,45 +985,141 @@ class CostmapImageGenerator:
         infos,
         envs,
         skipped_last,
+        return_tensors=False,
     ):
+        t0_gen = time.perf_counter()
         for i, done in enumerate(dones):
             if done:
-                # Done is true on the first step of a new episode:
-                self._mappers[i] = self._make_mapper()
-                self._graphs[i] = nx.Graph()
+                # Clear the visual descriptor cache for this environment:
+                self._visual_descriptor_cache[i] = {}
 
-        for i, obs in enumerate(observations):
-            if self._use_gt_perception:
-                agent_state = envs.call_sim_at(i, "get_agent_state")
-                self._mappers[i].update(
-                    self._graphs[i],
-                    envs[i].sim,
-                    obs["rgb"],
-                    obs["depth_img"],
-                    obs["semantic_img"],
-                    agent_state,
+        t0 = time.perf_counter()
+        graph_data = self._graph_generator.generate(
+            ep_metadata,
+            actions,
+            observations,
+            rewards,
+            dones,
+            infos,
+            envs,
+            skipped_last,
+        )
+        graphs = graph_data["gt_perception_graph"]
+        print(f"Graph generation time: {time.perf_counter() - t0:.3f}s")
+
+        t0 = time.perf_counter()
+        costmaps = []
+        for graph, ep, obs, descriptor_cache in zip(
+            graphs, ep_metadata, observations, self._visual_descriptor_cache
+        ):
+            goal = ep.object_category
+            costmaps.append(
+                self._get_costmap(graph, goal, obs["rgb"], descriptor_cache)
+            )
+        print(f"Costmap generation time: {time.perf_counter() - t0:.3f}s")
+
+        print(f"Total generation time: {time.perf_counter() - t0_gen:.3f}s")
+        print(f"Graph sizes: {[len(g.nodes) for g in graphs]}")
+        return {"predicted_costmap": costmaps}
+
+    def _get_costmap(self, graph, goal, rgb, descriptor_cache):
+        latest_frame_nodes = self._get_latest_frame_nodes(graph)
+
+        if not latest_frame_nodes:
+            # No nodes in the latest frame, return an empty costmap:
+            height, width = rgb.shape[0], rgb.shape[1]
+            return torch.ones((height, width, 1), dtype=torch.uint8) * 255
+
+        t0 = time.perf_counter()
+        self._add_descriptors(latest_frame_nodes, rgb, descriptor_cache)
+        # self._add_latest_frame_descriptors(latest_frame_nodes, rgb, descriptor_cache)
+        print(f"\tAdd descriptor time: {time.perf_counter() - t0:.3f}s")
+
+        if goal not in self._goal_descriptor_cache:
+            self._goal_descriptor_cache[goal] = (
+                self._descriptor_generator.get_text_descriptors([goal])[0]
+            )
+
+        goal_descriptor = self._goal_descriptor_cache[goal].unsqueeze(0)
+
+        t0 = time.perf_counter()
+        costs = predict_path_lengths(
+            self._cost_predictor,
+            graph,
+            goal_descriptor,
+            ["visual_descriptor"],
+            deep_copy=False,
+            edge_weight_name=self._edge_weight_name,
+            max_seq_len=self._max_seq_len,
+        )
+        print(f"\tPredict costs time: {time.perf_counter() - t0:.3f}s")
+
+        t0 = time.perf_counter()
+        costmap = self._build_latest_frame_costmap(
+            latest_frame_nodes, costs, rgb.shape[0], rgb.shape[1]
+        )
+        print(f"\tBuild costmap time: {time.perf_counter() - t0:.3f}s")
+
+        return costmap
+
+    def _build_latest_frame_costmap(self, latest_frame_nodes, costs, height, width):
+        costmap = np.ones((height, width, 1))
+
+        for n, attr in latest_frame_nodes:
+            mask = attr["segmentation"]
+            costmap[mask] = costs[n] * self._costed_segment_max
+
+        costmap = np.clip(costmap, 0, 1) * 255
+        return torch.tensor(costmap.astype(np.uint8))
+
+    def _get_latest_frame_nodes(self, graph):
+        frame_idxs = [attr["map"][0] for n, attr in graph.nodes(data=True)]
+        latest_frame = max(frame_idxs)
+        print(f"\t\tNum steps: {latest_frame+1}")
+        latest_frame_nodes = [
+            (n, attr)
+            for n, attr in graph.nodes(data=True)
+            if attr["map"][0] == latest_frame
+        ]
+        return latest_frame_nodes
+
+    def _add_descriptors(self, nodes, rgb, descriptor_cache):
+        t_infer_descriptor = 0
+        num_cached = len(nodes)
+
+        # Update descriptor cache with any new nodes in the latest frame:
+        for n, attr in nodes:
+            # Use only the first descriptor for each instance_id (TODO: This only works
+            # for GT maps):
+            if attr["instance_id"] not in descriptor_cache:
+                t0 = time.perf_counter()
+                node_descriptor = self._get_node_descriptor(rgb, attr["segmentation"])
+                t_infer_descriptor += time.perf_counter() - t0
+                descriptor_cache[attr["instance_id"]] = node_descriptor
+                num_cached -= 1
+
+            attr["visual_descriptor"] = descriptor_cache[attr["instance_id"]]
+
+        print(f"\t\tDescriptor inference time: {t_infer_descriptor:.3f}s")
+        print(f"\t\tNum cached nodes: {num_cached}/{len(nodes)}")
+
+    def _get_node_descriptor(self, goal_img, goal_mask):
+        descriptor = []
+        for attr in self._node_attributes:
+            if attr == "clip_embedding":
+                if not goal_mask.any():
+                    # Use the entire image if no mask is available:
+                    goal_mask = ~goal_mask
+                descriptor.append(
+                    self._descriptor_generator.get_mask_descriptors(
+                        goal_img, [goal_mask]
+                    )
                 )
-            else:
-                self._mappers[i].update(self._graphs[i], obs["rgb"])
-
-        # return {"rgb": [o["rgb"] for o in observations]}
-
-    def _get_latest_frame_costs(self, graph):
-        contracted_graph = contract_da_edges(
-            copy.deepcopy(graph), target_selection="first"
-        )
-        orig_idx_to_contracted_idx = get_orig_idx_to_contracted_idx_map(
-            contracted_graph
-        )
-
-        predicted_costmap = build_costmap_image(
-            predicted_costs[frame],
-            frame_nodes,
-            frame_masks,
-            orig_idx_to_contracted_idx,
-            costmap_width,
-            costmap_height,
-        )
+            if attr == "full_frame_clip_embeddings":
+                descriptor.append(
+                    self._descriptor_generator.get_image_descriptors([goal_img])
+                )
+        return torch.concatenate(descriptor, axis=-1).squeeze(0)
 
 
 class ClipGenerator:
