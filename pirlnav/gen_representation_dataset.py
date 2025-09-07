@@ -173,6 +173,7 @@ class GraphDataStorage:
                 pickle.dump(data[k], f)
 
         self._completed_eps.append(ep_id)
+
         # Save the episode index in case of early termination:
         ep_index_path = f"{self._output_path}/ep_index.txt"
         with open(ep_index_path, "w") as f:
@@ -394,7 +395,6 @@ class RepresentationGenerator:
         if self._generate_skip_index:
             self._non_movement_ep_index = episodes.copy()
             ep_index_path = config["TASK_CONFIG"]["DATASET"]["SUB_SPLIT_INDEX_PATH"]
-            # Put no_movement before extension:
             self._non_movement_ep_index_path = (
                 f"{ep_index_path[:-5]}_no_look_actions.json"
             )
@@ -553,13 +553,13 @@ class RepresentationGenerator:
         return ep_data
 
     def _should_skip(self, prev_action, prev_obs, prev_done, obs):
-        if self._skip_non_movement_actions:
-            return self._is_non_movement_action(prev_action, prev_obs, prev_done, obs)
-        elif self._skip_look_actions:
+        if self._skip_look_actions:
             return self._is_look_action(prev_action)
         return False
 
     def _is_non_movement_action(self, prev_action, prev_obs, prev_done, obs):
+        # TODO: This is no longer used. Testing navigability using collisions seems
+        # fundamental to the ObjectNav HD demo behaviours.
         # Never skip the first step:
         if prev_done:
             return False

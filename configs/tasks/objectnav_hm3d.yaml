@@ -90,25 +90,23 @@ REPRESENTATION_GENERATOR:
   skip_look_actions: False
   generate_skip_index: False
   data_generators:
-    # raw_image:
-    #   resize_and_crop_to: 256
+    raw_image:
+      resize_and_crop_to: 256
     # agent_state:
     # non_visual:
     # clip:
     #   use_float16: True
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
-    ground_truth_costmap:
-      resize_and_crop_to: 128
+    # ground_truth_costmap:
+    #   resize_and_crop_to: 128
     # ground_truth_perception_graph:
   data_storage:
     output_path: /storage/dc/pvr_data/default
-    # Zarr:
-    name: "graph"
-    # name: "zarr"
+    # name: "graph"
+    name: "zarr"
+    # name: "nomad"
     kwargs:
       batch_chunk_size: 1000
-    # NoMaD:
-    # name: "nomad"
 
 
 PVR:
