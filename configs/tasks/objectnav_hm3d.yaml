@@ -101,12 +101,17 @@ REPRESENTATION_GENERATOR:
     # ground_truth_costmap:
     #   resize_and_crop_to: 128
     # ground_truth_perception_graph:
-    predicted_costmap:
+    costmap_visualisation:
       model_path: "/home/dc/data/nav_experiments/cost_predictor/test_objectnav_20250902_165511/epoch_319.pth"
       edge_weight_name: "e3d"
+      resize_and_crop_to: 256
+    # predicted_costmap:
+    #   model_path: "/home/dc/data/nav_experiments/cost_predictor/test_objectnav_20250902_165511/epoch_319.pth"
+    #   edge_weight_name: "e3d"
   data_storage:
     output_path: /storage/dc/pvr_data/default
-    name: "graph"
+    name: "video"
+    # name: "graph"
     # name: "zarr"
     # name: "nomad"
     kwargs:

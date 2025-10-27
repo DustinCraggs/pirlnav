@@ -23,9 +23,10 @@ python -u -m run \
     --run-type eval \
     --seed 1000 \
     EVAL_CKPT_PATH_DIR $EVAL_CHECKPOINT_DIR \
+    WB.PROJECT_NAME habitat-bc-eval \
     WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
-    WB.MODE online \
+    WB.MODE disabled \
     VIDEO_DIR "$DATA_DIR/videos/$GROUP_NAME/$EXP_NAME" \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \

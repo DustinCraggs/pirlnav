@@ -84,6 +84,7 @@ def get_data_generators(config, num_envs):
         "ground_truth_costmap": GroundTruthCostmapImageGenerator,
         "ground_truth_perception_graph": GroundTruthPerceptionGraphGenerator,
         "predicted_costmap": PredictedCostmapImageGenerator,
+        "costmap_visualisation": CostmapVisualisationGenerator,
         "clip": ClipGenerator,
         "vc_1": Vc1Generator,
         "cogvlm2": CogVlmGenerator,
@@ -105,6 +106,7 @@ def get_data_storage(config, episodes):
         "zarr": ZarrDataStorage,
         "nomad": NomadDataStorage,
         "graph": GraphDataStorage,
+        "video": VideoDataStorage,
     }
 
     storage_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]["data_storage"]
@@ -163,6 +165,58 @@ class NoOpLookActionSpaceConfiguration(HabitatSimV0ActionSpaceConfiguration):
         config.update(new_config)
 
         return config
+
+
+class VideoDataStorage:
+    def __init__(self, output_path, episodes, fps=10, **kwargs):
+        self._output_path = output_path
+        self._fps = fps
+        self._completed_eps = []
+
+    def save_episode(self, data, scene_id, episode_id, object_category):
+        scene_id = scene_id.split("/")[-2]
+        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+        output_path = f"{self._output_path}/{ep_id}.mp4"
+
+        os.makedirs(self._output_path, exist_ok=True)
+
+        # Inpaint key text on images:
+        for d in data:
+            for k, img in d.items():
+                cv2.putText(
+                    np.ascontiguousarray(img, dtype=np.uint8),
+                    k,
+                    (5, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 255),
+                    1,
+                )
+
+        data = {k: np.stack([d[k] for d in data]) for k in data[0]}
+        print(f"Data keys: {list(data.keys())}")
+        print(f"Data shapes: {[data[k].shape for k in data]}")
+        # Stitch all data into a grid:
+        # Assumes all images are the same size:
+        images = np.stack([v for v in data.values()])
+        print(f"Before {images.shape=}")
+        images = einops.rearrange(images, "(b1 b2) t h w c -> t (b1 h) (b2 w) c", b1=2)
+        print(f"After {images.shape=}")
+
+        height, width = images[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        video_writer = cv2.VideoWriter(output_path, fourcc, self._fps, (width, height))
+
+        for img in images:
+            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            video_writer.write(img_bgr)
+
+        video_writer.release()
+
+        self._completed_eps.append(ep_id)
+
+    def close(self):
+        pass
 
 
 class GraphDataStorage:
@@ -544,8 +598,6 @@ class RepresentationGenerator:
                 for i in range(self._num_envs)
             ]
 
-            t0 = time.perf_counter()
-
             step_data = self._generate_step(
                 previous_episodes,
                 actions,
@@ -860,7 +912,7 @@ class GroundTruthPerceptionGraphGenerator:
         self.data_names = ["gt_perception_graph"]
 
         self._make_mapper_fn = lambda: SimIncrementalMapper(
-            use_mask_rle=True, add_clip_mask_descriptors=False
+            # use_mask_rle=True, add_clip_mask_descriptors=False
         )
 
         self._mappers = [None for _ in range(num_envs)]
@@ -897,6 +949,7 @@ class GroundTruthPerceptionGraphGenerator:
                 self._scene_instance_id_to_label_dist_cache[scene] = envs.call_at(
                     i, "get_semantic_instance_id_to_name_map"
                 )
+
             self._update_graph(
                 graph,
                 mapper,
@@ -907,17 +960,14 @@ class GroundTruthPerceptionGraphGenerator:
                 self._scene_instance_id_to_label_dist_cache[scene],
             )
 
-        return {
-            "gt_perception_graph": self._graphs,
-            # "contracted_gt_perception_graph": self._contracted_graphs,
-            # "descriptor_cache": [self._label_descriptor_cache] * len(ep_metadata),
-        }
+        return {"gt_perception_graph": self._graphs}
 
     @staticmethod
     def _update_graph(
         graph, mapper, rgb, semantic, depth, object_centers, instance_id_to_label_dist
     ):
         semantic = semantic[..., 0]
+
         mapper.update(graph, object_centers, rgb, semantic, depth)
 
         graph = GroundTruthPerceptionGraphGenerator._add_instance_labels(
@@ -957,7 +1007,7 @@ class PredictedCostmapImageGenerator:
         **kwargs,
     ):
         self._edge_weight_name = edge_weight_name
-        self._costed_segment_max = costed_segment_max
+        self._cost_scale = costed_segment_max
         self._max_seq_len = max_seq_len
 
         # TODO: Support different graph generators
@@ -987,13 +1037,11 @@ class PredictedCostmapImageGenerator:
         skipped_last,
         return_tensors=False,
     ):
-        t0_gen = time.perf_counter()
         for i, done in enumerate(dones):
             if done:
                 # Clear the visual descriptor cache for this environment:
                 self._visual_descriptor_cache[i] = {}
 
-        t0 = time.perf_counter()
         graph_data = self._graph_generator.generate(
             ep_metadata,
             actions,
@@ -1005,35 +1053,33 @@ class PredictedCostmapImageGenerator:
             skipped_last,
         )
         graphs = graph_data["gt_perception_graph"]
-        print(f"Graph generation time: {time.perf_counter() - t0:.3f}s")
 
-        t0 = time.perf_counter()
         costmaps = []
-        for graph, ep, obs, descriptor_cache in zip(
-            graphs, ep_metadata, observations, self._visual_descriptor_cache
-        ):
-            goal = ep.object_category
+        # for graph, ep, obs, descriptor_cache in zip(
+        #     graphs, ep_metadata, observations, self._visual_descriptor_cache
+        # ):
+        for i in range(len(graphs)):
+            goal = ep_metadata[i].object_category
             costmaps.append(
-                self._get_costmap(graph, goal, obs["rgb"], descriptor_cache)
+                self._get_costmap(self._graph_generator._mappers[i], graphs[i], goal)
             )
-        print(f"Costmap generation time: {time.perf_counter() - t0:.3f}s")
 
-        print(f"Total generation time: {time.perf_counter() - t0_gen:.3f}s")
-        print(f"Graph sizes: {[len(g.nodes) for g in graphs]}")
         return {"predicted_costmap": costmaps}
 
-    def _get_costmap(self, graph, goal, rgb, descriptor_cache):
-        latest_frame_nodes = self._get_latest_frame_nodes(graph)
+    def _get_costmap(self, mapper, graph, goal):
+        # Use instance_ids only for nodes in the latest frame:
 
-        if not latest_frame_nodes:
-            # No nodes in the latest frame, return an empty costmap:
-            height, width = rgb.shape[0], rgb.shape[1]
-            return torch.ones((height, width, 1), dtype=torch.uint8) * 255
+        # latest_frame_nodes = self._get_latest_frame_nodes(graph)
 
-        t0 = time.perf_counter()
-        self._add_descriptors(latest_frame_nodes, rgb, descriptor_cache)
-        # self._add_latest_frame_descriptors(latest_frame_nodes, rgb, descriptor_cache)
-        print(f"\tAdd descriptor time: {time.perf_counter() - t0:.3f}s")
+        # if not latest_frame_nodes:
+        #     # No nodes in the latest frame, return an empty costmap:
+        #     height, width = rgb.shape[0], rgb.shape[1]
+        #     return torch.ones((height, width, 1), dtype=torch.uint8) * 255
+
+        # t0 = time.perf_counter()
+        # self._add_descriptors(latest_frame_nodes, rgb, descriptor_cache)
+        # # self._add_latest_frame_descriptors(latest_frame_nodes, rgb, descriptor_cache)
+        # print(f"\tAdd descriptor time: {time.perf_counter() - t0:.3f}s")
 
         if goal not in self._goal_descriptor_cache:
             self._goal_descriptor_cache[goal] = (
@@ -1042,7 +1088,6 @@ class PredictedCostmapImageGenerator:
 
         goal_descriptor = self._goal_descriptor_cache[goal].unsqueeze(0)
 
-        t0 = time.perf_counter()
         costs = predict_path_lengths(
             self._cost_predictor,
             graph,
@@ -1052,74 +1097,151 @@ class PredictedCostmapImageGenerator:
             edge_weight_name=self._edge_weight_name,
             max_seq_len=self._max_seq_len,
         )
-        print(f"\tPredict costs time: {time.perf_counter() - t0:.3f}s")
 
-        t0 = time.perf_counter()
-        costmap = self._build_latest_frame_costmap(
-            latest_frame_nodes, costs, rgb.shape[0], rgb.shape[1]
-        )
-        print(f"\tBuild costmap time: {time.perf_counter() - t0:.3f}s")
+        # Ordering of graph.nodes should be consistent with the cost sequence:
+        node_id_to_cost = {n: costs[n] for n in graph.nodes()}
+
+        costmap = mapper.get_latest_frame_costmap(node_id_to_cost, self._cost_scale)
+        costmap = torch.tensor(costmap)
+        # costmap = self._build_latest_frame_costmap(
+        #     latest_frame_nodes, costs, rgb.shape[0], rgb.shape[1]
+        # )
 
         return costmap
 
-    def _build_latest_frame_costmap(self, latest_frame_nodes, costs, height, width):
-        costmap = np.ones((height, width, 1))
+    # def _build_latest_frame_costmap(self, latest_frame_nodes, costs, height, width):
+    #     costmap = np.ones((height, width, 1))
 
-        for n, attr in latest_frame_nodes:
-            mask = attr["segmentation"]
-            costmap[mask] = costs[n] * self._costed_segment_max
+    #     for n, attr in latest_frame_nodes:
+    #         mask = attr["segmentation"]
+    #         costmap[mask] = costs[n] * self._cost_scale
 
-        costmap = np.clip(costmap, 0, 1) * 255
-        return torch.tensor(costmap.astype(np.uint8))
+    #     costmap = np.clip(costmap, 0, 1) * 255
+    #     return torch.tensor(costmap.astype(np.uint8))
 
-    def _get_latest_frame_nodes(self, graph):
-        frame_idxs = [attr["map"][0] for n, attr in graph.nodes(data=True)]
-        latest_frame = max(frame_idxs)
-        print(f"\t\tNum steps: {latest_frame+1}")
-        latest_frame_nodes = [
-            (n, attr)
-            for n, attr in graph.nodes(data=True)
-            if attr["map"][0] == latest_frame
+    # def _get_latest_frame_nodes(self, graph):
+    #     frame_idxs = [attr["map"][0] for n, attr in graph.nodes(data=True)]
+    #     latest_frame = max(frame_idxs)
+    #     print(f"\t\tNum steps: {latest_frame+1}")
+    #     latest_frame_nodes = [
+    #         (n, attr)
+    #         for n, attr in graph.nodes(data=True)
+    #         if attr["map"][0] == latest_frame
+    #     ]
+    #     return latest_frame_nodes
+
+    # def _add_descriptors(self, nodes, rgb, descriptor_cache):
+    #     t_infer_descriptor = 0
+    #     num_cached = len(nodes)
+
+    #     # Update descriptor cache with any new nodes in the latest frame:
+    #     for n, attr in nodes:
+    #         # Use only the first descriptor for each instance_id (TODO: This only works
+    #         # for GT maps):
+    #         if attr["instance_id"] not in descriptor_cache:
+    #             t0 = time.perf_counter()
+    #             node_descriptor = self._get_node_descriptor(rgb, attr["segmentation"])
+    #             t_infer_descriptor += time.perf_counter() - t0
+    #             descriptor_cache[attr["instance_id"]] = node_descriptor
+    #             num_cached -= 1
+
+    #         attr["visual_descriptor"] = descriptor_cache[attr["instance_id"]]
+
+    #     print(f"\t\tDescriptor inference time: {t_infer_descriptor:.3f}s")
+    #     print(f"\t\tNum cached nodes: {num_cached}/{len(nodes)}")
+
+    # def _get_node_descriptor(self, goal_img, goal_mask):
+    #     descriptor = []
+    #     for attr in self._node_attributes:
+    #         if attr == "clip_embedding":
+    #             if not goal_mask.any():
+    #                 # Use the entire image if no mask is available:
+    #                 goal_mask = ~goal_mask
+    #             descriptor.append(
+    #                 self._descriptor_generator.get_mask_descriptors(
+    #                     goal_img, [goal_mask]
+    #                 )
+    #             )
+    #         if attr == "full_frame_clip_embeddings":
+    #             descriptor.append(
+    #                 self._descriptor_generator.get_image_descriptors([goal_img])
+    #             )
+    #     return torch.concatenate(descriptor, axis=-1).squeeze(0)
+
+
+class CostmapVisualisationGenerator:
+
+    def __init__(
+        self,
+        num_envs,
+        model_path,
+        edge_weight_name,
+        costed_segment_max=0.8,
+        max_seq_len=300,
+        resize_and_crop_to=None,
+        **kwargs,
+    ):
+        self.data_names = ["costmap_visualisation"]
+
+        self._costmap_generator = PredictedCostmapImageGenerator(
+            num_envs,
+            model_path,
+            edge_weight_name,
+            costed_segment_max,
+            max_seq_len,
+        )
+        self._gt_costmap_generator = GroundTruthCostmapImageGenerator(num_envs)
+
+        self._transforms = []
+        if resize_and_crop_to:
+            self._transforms.append(torchvision.transforms.Resize(resize_and_crop_to))
+            self._transforms.append(
+                torchvision.transforms.CenterCrop(resize_and_crop_to)
+            )
+
+    def generate(self, ep_metadata, actions, observations, *args):
+        costmap_data = self._costmap_generator.generate(
+            ep_metadata, actions, observations, *args
+        )
+        costmaps = costmap_data["predicted_costmap"]
+
+        gt_costmap_data = self._gt_costmap_generator.generate(
+            ep_metadata, actions, observations, *args
+        )
+        gt_costmaps = gt_costmap_data["gt_costmap"]
+
+        if self._transforms:
+            costmaps = self._apply_transforms(costmaps)
+            gt_costmaps = self._apply_transforms(gt_costmaps)
+            rgb = self._apply_transforms([o["rgb"] for o in observations])
+
+        costmap_deltas = [
+            np.abs(cm.astype(float) - gt_cm.astype(float))
+            for cm, gt_cm in zip(costmaps, gt_costmaps)
         ]
-        return latest_frame_nodes
 
-    def _add_descriptors(self, nodes, rgb, descriptor_cache):
-        t_infer_descriptor = 0
-        num_cached = len(nodes)
+        def process_costmap(cm):
+            cm = cm.squeeze(-1).astype(np.uint8)
+            cm = cv2.applyColorMap(cm, cv2.COLORMAP_SUMMER)
+            return cm
 
-        # Update descriptor cache with any new nodes in the latest frame:
-        for n, attr in nodes:
-            # Use only the first descriptor for each instance_id (TODO: This only works
-            # for GT maps):
-            if attr["instance_id"] not in descriptor_cache:
-                t0 = time.perf_counter()
-                node_descriptor = self._get_node_descriptor(rgb, attr["segmentation"])
-                t_infer_descriptor += time.perf_counter() - t0
-                descriptor_cache[attr["instance_id"]] = node_descriptor
-                num_cached -= 1
+        costmaps = [process_costmap(cm) for cm in costmaps]
+        gt_costmaps = [process_costmap(cm) for cm in gt_costmaps]
+        costmap_deltas = [process_costmap(cm) for cm in costmap_deltas]
 
-            attr["visual_descriptor"] = descriptor_cache[attr["instance_id"]]
+        return {
+            "rgb": rgb,
+            "costmap_delta": costmap_deltas,
+            "costmap": costmaps,
+            "gt_costmap": gt_costmaps,
+        }
 
-        print(f"\t\tDescriptor inference time: {t_infer_descriptor:.3f}s")
-        print(f"\t\tNum cached nodes: {num_cached}/{len(nodes)}")
-
-    def _get_node_descriptor(self, goal_img, goal_mask):
-        descriptor = []
-        for attr in self._node_attributes:
-            if attr == "clip_embedding":
-                if not goal_mask.any():
-                    # Use the entire image if no mask is available:
-                    goal_mask = ~goal_mask
-                descriptor.append(
-                    self._descriptor_generator.get_mask_descriptors(
-                        goal_img, [goal_mask]
-                    )
-                )
-            if attr == "full_frame_clip_embeddings":
-                descriptor.append(
-                    self._descriptor_generator.get_image_descriptors([goal_img])
-                )
-        return torch.concatenate(descriptor, axis=-1).squeeze(0)
+    def _apply_transforms(self, images):
+        images = [torch.as_tensor(img).permute(2, 0, 1) for img in images]
+        for transform in self._transforms:
+            images = [transform(img) for img in images]
+        images = [img.permute(1, 2, 0).numpy() for img in images]
+        return images
 
 
 class ClipGenerator:
