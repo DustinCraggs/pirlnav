@@ -1,4 +1,3 @@
-from collections import defaultdict
 import copy
 import gzip
 import json
@@ -12,6 +11,8 @@ import concurrent
 import cv2
 import einops
 import numpy as np
+
+# import ray
 import torch
 import torchvision
 import zarr
@@ -24,6 +25,7 @@ import networkx as nx
 
 from enum import Enum
 from concurrent.futures import ProcessPoolExecutor
+from collections import defaultdict
 
 from habitat_sim.utils.common import quat_to_magnum
 from habitat.sims.habitat_simulator.actions import HabitatSimV0ActionSpaceConfiguration
@@ -40,10 +42,13 @@ from PIL import Image
 
 from map_incremental import IncrementalMapper, SimIncrementalMapper
 
+# from parallel_mapper import SimIncrementalMapper as RemoteSimIncrementalMapper
+
 # TODO: Temporary hack as these are not accessible as installable packages:
 # sys.path.append("/storage/dc/sg/sg_habitat")
 sys.path.append("/home/dc/sg_new/sg_habitat")
 from scripts.exploration.models import load_checkpoint
+from scripts.exploration.graph_dataset import get_cost_matrix, get_objectnav_cost_matrix
 from scripts.exploration.descriptor_generator import ClipDescriptorGenerator
 from libs.planner_global.plan_topo import predict_path_lengths
 
@@ -55,16 +60,17 @@ from libs.planner_global.plan_topo import predict_path_lengths
 # TODO: Change generator to return dict of tensors?
 # TODO: DataClass to hold the data and metadata for each episode step
 # TODO: Consistent json ep index output and filtering of already-completed episodes
-OBJECTNAV_GOAL_REMAPPING = {
-    "chair": "chair",
-    "bed": "bed",
-    "toilet": "toilet",
-    "plant": "plant",
-    "tv": "tv_monitor",
-    "monitor": "tv_monitor",
-    "sofa": "sofa",
-    "couch": "sofa",
-}
+OBJECTNAV_GOALS = ["chair", "bed", "toilet", "plant", "tv_monitor", "sofa"]
+# OBJECTNAV_GOAL_REMAPPING = {
+#     "chair": "chair",
+#     "bed": "bed",
+#     "toilet": "toilet",
+#     "plant": "plant",
+#     "tv": "tv_monitor",
+#     "monitor": "tv_monitor",
+#     "sofa": "sofa",
+#     "couch": "sofa",
+# }
 
 
 def generate_episode_split_index(config):
@@ -194,14 +200,12 @@ class VideoDataStorage:
                 )
 
         data = {k: np.stack([d[k] for d in data]) for k in data[0]}
-        print(f"Data keys: {list(data.keys())}")
-        print(f"Data shapes: {[data[k].shape for k in data]}")
+
         # Stitch all data into a grid:
         # Assumes all images are the same size:
+        print([[(k, v.shape) for k, v in data.items()]])
         images = np.stack([v for v in data.values()])
-        print(f"Before {images.shape=}")
         images = einops.rearrange(images, "(b1 b2) t h w c -> t (b1 h) (b2 w) c", b1=2)
-        print(f"After {images.shape=}")
 
         height, width = images[0].shape[:2]
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -323,7 +327,7 @@ class ZarrDataStorage:
         for key, data_array in data.items():
             chunks = [None] * len(data_array.shape)
             chunks[0] = self._batch_chunk_size
-            # self._data_group[key] = zarr.array(data_array, chunks=chunks)
+
             self._data_group[key] = zarr.create(
                 shape=(self._total_length, *data_array.shape[1:]),
                 dtype=data_array.dtype,
@@ -574,10 +578,10 @@ class RepresentationGenerator:
         movement_ep_lengths = {}
 
         # Track the episode info to deduplicate episodes from cycling environments:
-        previous_episodes = self._envs.current_episodes()
+        current_episodes = self._envs.current_episodes()
 
         step_data = self._generate_step(
-            previous_episodes, actions, observations, rewards, dones, None, should_skips
+            current_episodes, actions, observations, rewards, dones, None, should_skips
         )
         for ep, data in zip(rollout_data, step_data):
             ep.append(data)
@@ -598,19 +602,9 @@ class RepresentationGenerator:
                 for i in range(self._num_envs)
             ]
 
-            step_data = self._generate_step(
-                previous_episodes,
-                actions,
-                observations,
-                rewards,
-                dones,
-                infos,
-                should_skips,
-            )
-
             # If done, save the episode (the current obs is for the next ep):
             for i, ep in enumerate(rollout_data):
-                ep_metadata = previous_episodes[i]
+                ep_metadata = current_episodes[i]
                 done = dones[i]
 
                 # TODO: Need to change this line if removing all non-movement actions:
@@ -639,7 +633,17 @@ class RepresentationGenerator:
 
                     ep.clear()
                     # This env is now on a new ep, so update its metadata:
-                    previous_episodes[i] = self._envs.call_at(i, CURRENT_EPISODE_NAME)
+                    current_episodes[i] = self._envs.call_at(i, CURRENT_EPISODE_NAME)
+
+            step_data = self._generate_step(
+                current_episodes,
+                actions,
+                observations,
+                rewards,
+                dones,
+                infos,
+                should_skips,
+            )
 
             for ep, data, should_skip in zip(rollout_data, step_data, should_skips):
                 if not should_skip:
@@ -759,8 +763,6 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         self._shortest_path_maps = {}
 
         self._running_max_costs = [0.0] * num_envs
-
-        self._c = 0
 
     def generate(
         self,
@@ -908,18 +910,37 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
 
 class GroundTruthPerceptionGraphGenerator:
 
-    def __init__(self, num_envs, **kwargs):
+    def __init__(
+        self, num_envs, max_descriptor_update_image_frac, use_remote_mappers, **kwargs
+    ):
         self.data_names = ["gt_perception_graph"]
+        self._use_remote_mappers = use_remote_mappers
 
         self._make_mapper_fn = lambda: SimIncrementalMapper(
-            # use_mask_rle=True, add_clip_mask_descriptors=False
+            max_descriptor_update_image_frac=max_descriptor_update_image_frac,
         )
 
         self._mappers = [None for _ in range(num_envs)]
         self._graphs = [None for _ in range(num_envs)]
 
+        if self._use_remote_mappers:
+            num_clip_workers = 1
+            RemoteDescriptorGenerator = ray.remote(ClipDescriptorGenerator)
+            descriptor_generator_worker = ray.util.ActorPool(
+                [RemoteDescriptorGenerator.remote() for _ in range(num_clip_workers)]
+            )
+            self._mappers = [
+                RemoteSimIncrementalMapper.remote(
+                    descriptor_generator_worker=descriptor_generator_worker,
+                    max_descriptor_update_image_frac=max_descriptor_update_image_frac,
+                )
+                for _ in range(num_envs)
+            ]
+
         self._scene_object_centers = {}
         self._scene_instance_id_to_label_dist_cache = {}
+
+        # self._label_remap_func = load_object_label_remapping_func()
 
     def generate(
         self,
@@ -934,9 +955,12 @@ class GroundTruthPerceptionGraphGenerator:
     ):
         for i, done in enumerate(dones):
             if done:
-                # Done is true on the first step of a new episode:
-                self._mappers[i] = self._make_mapper_fn()
-                self._graphs[i] = nx.Graph()
+                # Done is true on the first step of a new episode.
+                if self._use_remote_mappers:
+                    self._mappers[i].reset()
+                else:
+                    self._mappers[i] = self._make_mapper_fn()
+                    self._graphs[i] = nx.Graph()
 
         for i, (graph, mapper, obs) in enumerate(
             zip(self._graphs, self._mappers, observations)
@@ -946,8 +970,8 @@ class GroundTruthPerceptionGraphGenerator:
                 self._scene_object_centers[scene] = envs.call_at(
                     i, "get_object_centers"
                 )
-                self._scene_instance_id_to_label_dist_cache[scene] = envs.call_at(
-                    i, "get_semantic_instance_id_to_name_map"
+                self._scene_instance_id_to_label_dist_cache[scene] = (
+                    build_semantic_instance_to_id_map(envs, i)
                 )
 
             self._update_graph(
@@ -982,15 +1006,15 @@ class GroundTruthPerceptionGraphGenerator:
         ]
 
         labels = [
-            instance_id_to_label_dist.get(attr["instance_id"], "unknown")[0]
+            instance_id_to_label_dist.get(attr["instance_id"], ["unknown"])[0]
             for n, attr in new_nodes
         ]
-        goal_labels = [OBJECTNAV_GOAL_REMAPPING.get(label) for label in labels]
 
-        for (n, attr), label, goal_label in zip(new_nodes, labels, goal_labels):
+        # TODO: Add raw labels?
+        for (n, attr), label in zip(new_nodes, labels):
             attr["label"] = label
-            if goal_label:
-                attr["goal_label"] = goal_label
+            if label in OBJECTNAV_GOALS:
+                attr["goal_label"] = label
 
         return graph
 
@@ -1002,6 +1026,7 @@ class PredictedCostmapImageGenerator:
         num_envs,
         model_path,
         edge_weight_name,
+        resize_and_crop_to=None,
         costed_segment_max=0.8,
         max_seq_len=300,
         **kwargs,
@@ -1011,7 +1036,7 @@ class PredictedCostmapImageGenerator:
         self._max_seq_len = max_seq_len
 
         # TODO: Support different graph generators
-        self._graph_generator = GroundTruthPerceptionGraphGenerator(num_envs)
+        self._graph_generator = GroundTruthPerceptionGraphGenerator(num_envs, **kwargs)
         self._descriptor_generator = ClipDescriptorGenerator()
         self._cost_predictor, train_config = load_checkpoint(model_path)
         self._cost_predictor.eval()
@@ -1024,6 +1049,13 @@ class PredictedCostmapImageGenerator:
         # TODO: Create cachedict class?
         self._goal_descriptor_cache = {}
         self._visual_descriptor_cache = [{} for _ in range(num_envs)]
+
+        self._transforms = []
+        if resize_and_crop_to:
+            self._transforms.append(torchvision.transforms.Resize(resize_and_crop_to))
+            self._transforms.append(
+                torchvision.transforms.CenterCrop(resize_and_crop_to)
+            )
 
     def generate(
         self,
@@ -1055,32 +1087,20 @@ class PredictedCostmapImageGenerator:
         graphs = graph_data["gt_perception_graph"]
 
         costmaps = []
-        # for graph, ep, obs, descriptor_cache in zip(
-        #     graphs, ep_metadata, observations, self._visual_descriptor_cache
-        # ):
+
         for i in range(len(graphs)):
             goal = ep_metadata[i].object_category
-            costmaps.append(
-                self._get_costmap(self._graph_generator._mappers[i], graphs[i], goal)
-            )
+            mapper = self._graph_generator._mappers[i]
+            costmap = self._get_costmap(mapper, graphs[i], goal)
+
+            if self._transforms:
+                costmap = self._apply_transforms(costmap)
+
+            costmaps.append(costmap)
 
         return {"predicted_costmap": costmaps}
 
     def _get_costmap(self, mapper, graph, goal):
-        # Use instance_ids only for nodes in the latest frame:
-
-        # latest_frame_nodes = self._get_latest_frame_nodes(graph)
-
-        # if not latest_frame_nodes:
-        #     # No nodes in the latest frame, return an empty costmap:
-        #     height, width = rgb.shape[0], rgb.shape[1]
-        #     return torch.ones((height, width, 1), dtype=torch.uint8) * 255
-
-        # t0 = time.perf_counter()
-        # self._add_descriptors(latest_frame_nodes, rgb, descriptor_cache)
-        # # self._add_latest_frame_descriptors(latest_frame_nodes, rgb, descriptor_cache)
-        # print(f"\tAdd descriptor time: {time.perf_counter() - t0:.3f}s")
-
         if goal not in self._goal_descriptor_cache:
             self._goal_descriptor_cache[goal] = (
                 self._descriptor_generator.get_text_descriptors([goal])[0]
@@ -1093,80 +1113,30 @@ class PredictedCostmapImageGenerator:
             graph,
             goal_descriptor,
             ["visual_descriptor"],
-            deep_copy=False,
             edge_weight_name=self._edge_weight_name,
-            max_seq_len=self._max_seq_len,
+            max_seq_len=None,
+            # max_seq_len=self._max_seq_len,
         )
+
+        # TODO: Need a proper inference function that uses the model's config
+        # to determine how to process costs:
+        # Predictions are logp1, reverse:
+        # costs = np.exp(costs) - 1.0
 
         # Ordering of graph.nodes should be consistent with the cost sequence:
         node_id_to_cost = {n: costs[n] for n in graph.nodes()}
 
         costmap = mapper.get_latest_frame_costmap(node_id_to_cost, self._cost_scale)
         costmap = torch.tensor(costmap)
-        # costmap = self._build_latest_frame_costmap(
-        #     latest_frame_nodes, costs, rgb.shape[0], rgb.shape[1]
-        # )
 
         return costmap
 
-    # def _build_latest_frame_costmap(self, latest_frame_nodes, costs, height, width):
-    #     costmap = np.ones((height, width, 1))
-
-    #     for n, attr in latest_frame_nodes:
-    #         mask = attr["segmentation"]
-    #         costmap[mask] = costs[n] * self._cost_scale
-
-    #     costmap = np.clip(costmap, 0, 1) * 255
-    #     return torch.tensor(costmap.astype(np.uint8))
-
-    # def _get_latest_frame_nodes(self, graph):
-    #     frame_idxs = [attr["map"][0] for n, attr in graph.nodes(data=True)]
-    #     latest_frame = max(frame_idxs)
-    #     print(f"\t\tNum steps: {latest_frame+1}")
-    #     latest_frame_nodes = [
-    #         (n, attr)
-    #         for n, attr in graph.nodes(data=True)
-    #         if attr["map"][0] == latest_frame
-    #     ]
-    #     return latest_frame_nodes
-
-    # def _add_descriptors(self, nodes, rgb, descriptor_cache):
-    #     t_infer_descriptor = 0
-    #     num_cached = len(nodes)
-
-    #     # Update descriptor cache with any new nodes in the latest frame:
-    #     for n, attr in nodes:
-    #         # Use only the first descriptor for each instance_id (TODO: This only works
-    #         # for GT maps):
-    #         if attr["instance_id"] not in descriptor_cache:
-    #             t0 = time.perf_counter()
-    #             node_descriptor = self._get_node_descriptor(rgb, attr["segmentation"])
-    #             t_infer_descriptor += time.perf_counter() - t0
-    #             descriptor_cache[attr["instance_id"]] = node_descriptor
-    #             num_cached -= 1
-
-    #         attr["visual_descriptor"] = descriptor_cache[attr["instance_id"]]
-
-    #     print(f"\t\tDescriptor inference time: {t_infer_descriptor:.3f}s")
-    #     print(f"\t\tNum cached nodes: {num_cached}/{len(nodes)}")
-
-    # def _get_node_descriptor(self, goal_img, goal_mask):
-    #     descriptor = []
-    #     for attr in self._node_attributes:
-    #         if attr == "clip_embedding":
-    #             if not goal_mask.any():
-    #                 # Use the entire image if no mask is available:
-    #                 goal_mask = ~goal_mask
-    #             descriptor.append(
-    #                 self._descriptor_generator.get_mask_descriptors(
-    #                     goal_img, [goal_mask]
-    #                 )
-    #             )
-    #         if attr == "full_frame_clip_embeddings":
-    #             descriptor.append(
-    #                 self._descriptor_generator.get_image_descriptors([goal_img])
-    #             )
-    #     return torch.concatenate(descriptor, axis=-1).squeeze(0)
+    def _apply_transforms(self, costmap):
+        costmap = torch.as_tensor(costmap).permute(2, 0, 1)
+        for transform in self._transforms:
+            costmap = transform(costmap)
+        costmap = costmap.permute(1, 2, 0)
+        return costmap
 
 
 class CostmapVisualisationGenerator:
@@ -1179,6 +1149,7 @@ class CostmapVisualisationGenerator:
         costed_segment_max=0.8,
         max_seq_len=300,
         resize_and_crop_to=None,
+        use_loaded_gt_graphs=True,
         **kwargs,
     ):
         self.data_names = ["costmap_visualisation"]
@@ -1187,10 +1158,20 @@ class CostmapVisualisationGenerator:
             num_envs,
             model_path,
             edge_weight_name,
-            costed_segment_max,
-            max_seq_len,
+            resize_and_crop_to=resize_and_crop_to,
+            costed_segment_max=costed_segment_max,
+            max_seq_len=max_seq_len,
+            **kwargs,
         )
-        self._gt_costmap_generator = GroundTruthCostmapImageGenerator(num_envs)
+
+        if use_loaded_gt_graphs:
+            self._gt_costmap_generator = LoadedGraphCostmapGenerator(
+                edge_weight_name=edge_weight_name, **kwargs
+            )
+            self._gt_graph_name = "loaded_graph_costmap"
+        else:
+            self._gt_costmap_generator = GroundTruthCostmapImageGenerator(num_envs)
+            self._gt_graph_name = "gt_costmap"
 
         self._transforms = []
         if resize_and_crop_to:
@@ -1208,7 +1189,7 @@ class CostmapVisualisationGenerator:
         gt_costmap_data = self._gt_costmap_generator.generate(
             ep_metadata, actions, observations, *args
         )
-        gt_costmaps = gt_costmap_data["gt_costmap"]
+        gt_costmaps = gt_costmap_data[self._gt_graph_name]
 
         if self._transforms:
             costmaps = self._apply_transforms(costmaps)
@@ -1222,7 +1203,8 @@ class CostmapVisualisationGenerator:
 
         def process_costmap(cm):
             cm = cm.squeeze(-1).astype(np.uint8)
-            cm = cv2.applyColorMap(cm, cv2.COLORMAP_SUMMER)
+            # cm = cv2.applyColorMap(cm, cv2.COLORMAP_SUMMER)
+            cm = cv2.applyColorMap(cm, cv2.COLORMAP_WINTER)
             return cm
 
         costmaps = [process_costmap(cm) for cm in costmaps]
@@ -1242,6 +1224,150 @@ class CostmapVisualisationGenerator:
             images = [transform(img) for img in images]
         images = [img.permute(1, 2, 0).numpy() for img in images]
         return images
+
+
+class LoadedGraphCostmapGenerator:
+
+    def __init__(
+        self,
+        graph_base_path,
+        graph_name,
+        edge_weight_name,
+        label_attribute,
+        use_log_costs=True,
+        **kwargs,
+    ):
+        self.data_names = ["loaded_graph_costmap"]
+
+        self._graph_base_path = graph_base_path
+        self._graph_name = graph_name
+        self._edge_weight_name = edge_weight_name
+        self._label_attribute = label_attribute
+        self._use_log_costs = use_log_costs
+
+        self._graphs = {}
+        self._instance_id_to_cost_dicts = {}
+        self._running_max_costs = {}
+
+    def generate(
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+    ):
+        for i, done in enumerate(dones):
+            if done:
+                ep = ep_metadata[i]
+                scene_id = ep.scene_id.split("/")[-2]
+                ep_number = ep.episode_id
+                goal = ep.object_category
+
+                ep_id = f"{scene_id}_{ep_number}_{goal}"
+                graph_file = f"{self._graph_base_path}/{ep_id}/{self._graph_name}"
+                print(f"Loading graph from {graph_file}")
+                with gzip.open(graph_file, "rb") as graph_file:
+                    self._graphs[i] = pickle.load(graph_file)
+
+                self._instance_id_to_cost_dicts[i] = self._get_instance_id_to_cost_dict(
+                    self._graphs[i], goal
+                )
+                self._running_max_costs[i] = 0.0
+
+        costmaps = []
+        for i, obs in enumerate(observations):
+            instance_id_to_cost = self._instance_id_to_cost_dicts[i]
+
+            instance_id_to_cost, self._running_max_costs[i] = normalise_costs(
+                obs["semantic"],
+                instance_id_to_cost,
+                self._running_max_costs[i],
+            )
+
+            costmap = build_costmap(
+                obs["semantic"], instance_id_to_cost, max_valid_cost=0.8
+            )
+            costmaps.append(costmap)
+
+        return {"loaded_graph_costmap": costmaps}
+
+    def _get_instance_id_to_cost_dict(self, graph, goal):
+        cost_matrix = get_cost_matrix(graph, weight=self._edge_weight_name)
+
+        objectnav_cost_matrix = get_objectnav_cost_matrix(
+            graph, cost_matrix, [goal], self._label_attribute
+        )
+
+        if self._use_log_costs:
+            objectnav_cost_matrix = np.log(objectnav_cost_matrix + 1.0)
+
+        return {
+            d["instance_id"]: objectnav_cost_matrix[0, i]
+            for i, d in graph.nodes(data=True)
+        }
+
+
+def build_costmap(semantic_img, instance_id_to_cost, max_valid_cost=0.8):
+    costmap = -np.ones_like(semantic_img, dtype=np.float32)
+
+    for k in np.unique(semantic_img):
+        costmap[semantic_img == k] = instance_id_to_cost.get(k, -1.0)
+
+    costmap /= costmap.max()
+    costmap *= max_valid_cost
+
+    # Set un-costed segments to 1.0
+    costmap[costmap < 0] = 1.0
+    return (costmap * 255).astype(np.uint8)
+
+
+def normalise_costs(semantic_img, instance_to_cost, max_cost_so_far):
+    max_current_frame_cost = max(
+        instance_to_cost.get(k, -1.0) for k in np.unique(semantic_img)
+    )
+    max_cost_so_far = max(max_cost_so_far, max_current_frame_cost)
+
+    instance_to_cost = {
+        instance_id: cost / max_cost_so_far
+        for instance_id, cost in instance_to_cost.items()
+    }
+
+    return instance_to_cost, max_cost_so_far
+
+
+# def _get_normalised_costs(
+#     self, semantic_img, instance_to_cost, env_idx, max_valid_cost=0.8
+# ):
+#     current_instances = np.unique(semantic_img)
+#     current_costs = [
+#         instance_to_cost.get(instance, np.inf) for instance in current_instances
+#     ]
+
+#     if not np.isfinite(current_costs).any():
+#         # If all costs are invalid, return a map with all costs set to 1.0:
+#         return {instance: 1.0 for instance in current_instances}
+
+#     max_frame_cost = max(cost for cost in current_costs if np.isfinite(cost))
+
+#     # Update the maximum cost encountered so far for this episode. This is to match
+#     # normalisation of the cost predictor:
+#     self._running_max_costs[env_idx] = max(
+#         self._running_max_costs[env_idx], max_frame_cost
+#     )
+
+#     # Normalise the costs to [0, max_valid_cost], with 1.0 for invalid costs:
+#     max_cost = self._running_max_costs[env_idx]
+
+#     instance_to_cost = {
+#         instance_id: (cost / max_cost * max_valid_cost if np.isfinite(cost) else 1.0)
+#         for instance_id, cost in instance_to_cost.items()
+#     }
+
+#     return instance_to_cost
 
 
 class ClipGenerator:
@@ -1638,14 +1764,29 @@ def build_semantic_instance_to_id_map(envs, env_idx):
     # canonical label:
     # TODO: How was this done for the original ObjectNav dataset? There are some
     # false positives here (e.g. "tv cabinet"):
-    remap_labels = OBJECTNAV_GOAL_REMAPPING
+    remap_label_func = load_object_label_remapping_func()
 
     for instance_id, (orig_label, cost) in instance_id_to_label_dist.items():
-        for remap_label, remap_val in remap_labels.items():
-            if remap_label in orig_label:
-                instance_id_to_label_dist[instance_id] = (remap_val, cost)
-                break
+        canonical_label = remap_label_func(orig_label)
+        instance_id_to_label_dist[instance_id] = (canonical_label, cost)
+
     return instance_id_to_label_dist
+
+
+def load_object_label_remapping_func():
+    # Poorly documented. Original mappings come from this file, but it's not in the
+    # version of habitat-sim used by pirlnav. Copy it to the root of this project:
+    # habitat-sim/data/hm3d_semantics/hm3dsem_category_mappings.tsv
+
+    import pandas as pd
+
+    df = pd.read_csv("hm3dsem_category_mappings.tsv", sep="\t")
+
+    mapping = {
+        raw: canonical for raw, canonical in zip(df["raw_category"], df["mpcat40"])
+    }
+
+    return lambda label: mapping[label.strip().lower()]
 
 
 # def convert_rotation_to_small_movement(

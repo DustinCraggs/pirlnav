@@ -51,6 +51,7 @@ def generate_dataset_split_json(
     scenes = dataset_config.CONTENT_SCENES
     if "*" in dataset_config.CONTENT_SCENES:
         scenes = dataset.get_scenes_to_load(dataset_config)
+    print(f"{dataset_config.CONTENT_SCENES=}")
 
     episodes = dataset.episodes
     print(f"Total number of episodes before: {len(episodes)}")

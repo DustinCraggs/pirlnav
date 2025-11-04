@@ -81,6 +81,23 @@ DATASET:
   SUB_SPLIT_INDEX_PATH: null
   FILTER_EXISTING_PATH: null
 
+  # CONTENT_SCENES: [
+  #   # 1S7LAXRdDqK,
+  #   vLpv2VX547B
+  # ]
+  # CONTENT_SCENES: [
+  #   iKFn6fzyRqs,
+  #   QN2dRqwd84J,
+  #   b3WpMbPFB6q,
+  #   xAHnY3QzFUN,
+  #   qz3829g1Lzf,
+  #   YMNvYDhK8mB,
+  #   XiJhRLvpKpX,
+  #   ACZZiU6BXLz,
+  #   CthA7sQNTPK,
+  #   fxbzYAGkrtm
+  # ]
+
 SUB_SPLIT_GENERATOR:
   STRIDE: 10
   START_IDX: 0
@@ -91,28 +108,43 @@ REPRESENTATION_GENERATOR:
   skip_look_actions: False
   generate_skip_index: False
   data_generators:
-    # raw_image:
-    #   resize_and_crop_to: 256
+    raw_image:
+      resize_and_crop_to: 256
     # agent_state:
-    # non_visual:
+    non_visual:
     # clip:
     #   use_float16: True
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
     # ground_truth_costmap:
     #   resize_and_crop_to: 128
     # ground_truth_perception_graph:
-    costmap_visualisation:
-      model_path: "/home/dc/data/nav_experiments/cost_predictor/test_objectnav_20250902_165511/epoch_319.pth"
-      edge_weight_name: "e3d"
-      resize_and_crop_to: 256
-    # predicted_costmap:
-    #   model_path: "/home/dc/data/nav_experiments/cost_predictor/test_objectnav_20250902_165511/epoch_319.pth"
+    #   max_descriptor_update_image_frac: 0.3
+    #   use_remote_mappers: False
+    # costmap_visualisation:
+    #   model_path: "/home/dc/data/nav_experiments/cost_predictor/test100_norm_cost_20251103_192908/epoch_999.pth"
+    #   costed_segment_max: 0.8
     #   edge_weight_name: "e3d"
+    #   resize_and_crop_to: 256
+    #   max_descriptor_update_image_frac: 1.0
+    #   use_remote_mappers: False
+    #   use_loaded_gt_graphs: True
+    #   graph_base_path: /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/gt_perception_graphs_fix_goal_labels_max_frac_w_desc_new/
+    #   graph_name: gt_perception_graph_label_descriptors.pkl.gz
+    #   use_log_costs: True
+    #   label_attribute: label
+    predicted_costmap:
+      model_path: "/home/dc/data/nav_experiments/cost_predictor/norm_cost_goal_idx_fixes_2_20251103_201255/epoch_199.pth"
+      edge_weight_name: "e3d"
+      resize_and_crop_to: 128
+      max_descriptor_update_image_frac: 0.3
+      use_remote_mappers: False
+      # filter_labels: ["floor", "ceiling"]
+      # max_descriptor_update_image_frac: 1.0
   data_storage:
     output_path: /storage/dc/pvr_data/default
-    name: "video"
+    # name: "video"
     # name: "graph"
-    # name: "zarr"
+    name: "zarr"
     # name: "nomad"
     kwargs:
       batch_chunk_size: 1000
@@ -130,7 +162,7 @@ PVR:
   # pvr_keys: ["last_two_hidden_layers"]
   # pvr_keys: ["goal_costmap"]
   # pvr_keys: ["gt_costmap"]
-  pvr_keys: ["predicted_costmap"]
+  pvr_keys: ["rgb", "predicted_costmap"]
   # pvr_keys: ["rgb", "goal_costmap"]
   # pvr_keys: ["rgb", "gt_costmap"]
   # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]

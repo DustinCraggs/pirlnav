@@ -19,8 +19,8 @@ python run.py \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_storage.output_path $output_dir \
     TASK_CONFIG.REPRESENTATION_GENERATOR.skip_look_actions False \
-    TASK_CONFIG.REPRESENTATION_GENERATOR.generate_skip_index True \
-    TASK_CONFIG.SIMULATOR.ACTION_SPACE_CONFIG "v1_no_op_look" \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.generate_skip_index False \
+    # TASK_CONFIG.SIMULATOR.ACTION_SPACE_CONFIG "v1_no_op_look" \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/gt_perception_graphs_split_1/ep_index.txt \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/test/ep_index.txt \
     # DATASET.CONTENT_SCENES 
