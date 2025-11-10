@@ -1,18 +1,17 @@
-import copy
 import gzip
 import json
+import logging
 import os
 import pickle
 import re
 import time
 import traceback
 import types
-import concurrent
 import cv2
 import einops
 import numpy as np
 
-# import ray
+import ray
 import torch
 import torchvision
 import zarr
@@ -25,13 +24,11 @@ import networkx as nx
 
 from enum import Enum
 from concurrent.futures import ProcessPoolExecutor
-from collections import defaultdict
 
 from habitat_sim.utils.common import quat_to_magnum
 from habitat.sims.habitat_simulator.actions import HabitatSimV0ActionSpaceConfiguration
 from pirlnav.environment import SimpleRLEnv
 from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
-from habitat.core.environments import get_env_class
 from habitat.core.vector_env import CURRENT_EPISODE_NAME
 from habitat.core.registry import registry
 
@@ -40,13 +37,14 @@ from habitat.core.registry import registry
 from scipy.spatial.transform import Rotation
 from PIL import Image
 
-from map_incremental import IncrementalMapper, SimIncrementalMapper
-
-# from parallel_mapper import SimIncrementalMapper as RemoteSimIncrementalMapper
 
 # TODO: Temporary hack as these are not accessible as installable packages:
-# sys.path.append("/storage/dc/sg/sg_habitat")
-sys.path.append("/home/dc/sg_new/sg_habitat")
+sys.path.append("/storage/dc/sg/sg_habitat")
+# sys.path.append("/home/dc/sg_new/sg_habitat")
+from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
+from libs.mapper.parallel_mapper import (
+    SimIncrementalMapper as RemoteSimIncrementalMapper,
+)
 from scripts.exploration.models import load_checkpoint
 from scripts.exploration.graph_dataset import get_cost_matrix, get_objectnav_cost_matrix
 from scripts.exploration.descriptor_generator import ClipDescriptorGenerator
@@ -203,7 +201,6 @@ class VideoDataStorage:
 
         # Stitch all data into a grid:
         # Assumes all images are the same size:
-        print([[(k, v.shape) for k, v in data.items()]])
         images = np.stack([v for v in data.values()])
         images = einops.rearrange(images, "(b1 b2) t h w c -> t (b1 h) (b2 w) c", b1=2)
 
@@ -496,17 +493,19 @@ class RepresentationGenerator:
         self._data_generators = get_data_generators(config, self._num_envs)
         self._data_storage = get_data_storage(config, episodes=episodes)
 
+        rep_gen_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
+
+        self._store_last_data_only = False
+        if rep_gen_config["data_storage"]["name"] == "graph":
+            self._store_last_data_only = True
+
         self._skip_non_movement_actions = config["TASK_CONFIG"][
             "REPRESENTATION_GENERATOR"
         ]["skip_non_movement_actions"]
 
-        self._skip_look_actions = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"][
-            "skip_look_actions"
-        ]
+        self._skip_look_actions = rep_gen_config["skip_look_actions"]
 
-        self._generate_skip_index = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"][
-            "generate_skip_index"
-        ]
+        self._generate_skip_index = rep_gen_config["generate_skip_index"]
 
         if self._generate_skip_index:
             self._non_movement_ep_index = episodes.copy()
@@ -586,6 +585,8 @@ class RepresentationGenerator:
         for ep, data in zip(rollout_data, step_data):
             ep.append(data)
 
+        c = 0
+
         pbar = tqdm.tqdm(total=total_num_eps)
         while self._remaining_ep_set:
             # "next_actions" contains the actions from the BC dataset:
@@ -628,6 +629,9 @@ class RepresentationGenerator:
                         movement_ep_lengths[ep_key] = movement_step_counts[i]
                         movement_step_counts[i] = 0
                         pbar.update(1)
+                        c += 1
+                        if c > 200:
+                            exit()
                     else:
                         print(f"Duplicate episode {ep_key} (skipping)")
 
@@ -648,6 +652,11 @@ class RepresentationGenerator:
             for ep, data, should_skip in zip(rollout_data, step_data, should_skips):
                 if not should_skip:
                     ep.append(data)
+
+                    if self._store_last_data_only:
+                        # Keep only the last step's data:
+                        while len(ep) > 1:
+                            ep.pop(0)
 
         if self._generate_skip_index:
             # Save the ep index with lengths adjusted to only include non-movement
@@ -687,6 +696,14 @@ class RepresentationGenerator:
             for env_idx in range(self._num_envs)
         ]
         return ep_data
+
+    def _get_final_data(self, env_idx):
+        final_data = {}
+        for data_generator in self._data_generators:
+            if hasattr(data_generator, "get_final_data"):
+                output = data_generator.get_final_data(env_idx)
+                final_data.update(output)
+        return final_data
 
     def _should_skip(self, prev_action, prev_obs, prev_done, obs):
         if self._skip_look_actions:
@@ -911,32 +928,69 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
 class GroundTruthPerceptionGraphGenerator:
 
     def __init__(
-        self, num_envs, max_descriptor_update_image_frac, use_remote_mappers, **kwargs
+        self,
+        num_envs,
+        max_descriptor_update_image_frac,
+        use_remote_mappers=False,
+        **kwargs,
     ):
         self.data_names = ["gt_perception_graph"]
         self._use_remote_mappers = use_remote_mappers
 
+        descriptor_generator = ClipDescriptorGenerator()
         self._make_mapper_fn = lambda: SimIncrementalMapper(
             max_descriptor_update_image_frac=max_descriptor_update_image_frac,
+            descriptor_generator=descriptor_generator,
         )
 
         self._mappers = [None for _ in range(num_envs)]
         self._graphs = [None for _ in range(num_envs)]
 
+        path = f"/storage/dc/sg/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
+
         if self._use_remote_mappers:
-            num_clip_workers = 1
-            RemoteDescriptorGenerator = ray.remote(ClipDescriptorGenerator)
-            descriptor_generator_worker = ray.util.ActorPool(
-                [RemoteDescriptorGenerator.remote() for _ in range(num_clip_workers)]
+            import ray
+
+            ray.init(
+                logging_level=logging.WARNING,
+                runtime_env={"env_vars": {"PYTHONPATH": path}},
+                # dashboard_host="0.0.0.0",
             )
+
+            num_clip_workers = 2
+            # RemoteDescriptorGenerator = ray.remote(num_cpus=0.1, num_gpus=0.1)(
+            #     ClipDescriptorGenerator
+            # )
+            RemoteDescriptorGenerator = ray.serve.deployment(
+                num_replicas=num_clip_workers,
+                max_ongoing_requests=100,
+                ray_actor_options={"num_cpus": 0.1, "num_gpus": 0.1},
+            )(ClipDescriptorGenerator)
+
+            descriptor_generator = RemoteDescriptorGenerator.bind()
+            handle = ray.serve.run(descriptor_generator)
+
+            # handle = ray.serve.get_app_handle()
+
+            # descriptor_generator_worker = ray.util.ActorPool(
+            #     [RemoteDescriptorGenerator.remote() for _ in range(num_clip_workers)]
+            # )
+            # descriptor_actors = [
+            #     RemoteDescriptorGenerator.remote() for _ in range(num_clip_workers)
+            # ]
             self._mappers = [
                 RemoteSimIncrementalMapper.remote(
-                    descriptor_generator_worker=descriptor_generator_worker,
+                    descriptor_generator_worker=[handle],
+                    # descriptor_generator_worker=[
+                    #     descriptor_actors[i % num_clip_workers]
+                    # ],
+                    # descriptor_generator_worker=descriptor_actors,
                     max_descriptor_update_image_frac=max_descriptor_update_image_frac,
                 )
-                for _ in range(num_envs)
+                for i in range(num_envs)
             ]
 
+        self._env_idx_to_scene = {}
         self._scene_object_centers = {}
         self._scene_instance_id_to_label_dist_cache = {}
 
@@ -953,19 +1007,13 @@ class GroundTruthPerceptionGraphGenerator:
         envs,
         skipped_last,
     ):
-        for i, done in enumerate(dones):
-            if done:
-                # Done is true on the first step of a new episode.
-                if self._use_remote_mappers:
-                    self._mappers[i].reset()
-                else:
-                    self._mappers[i] = self._make_mapper_fn()
-                    self._graphs[i] = nx.Graph()
+        t0_gen = time.perf_counter()
 
-        for i, (graph, mapper, obs) in enumerate(
-            zip(self._graphs, self._mappers, observations)
-        ):
+        # t0_scene_update = time.perf_counter()
+        # Update scene instances:
+        for i in range(len(observations)):
             scene = ep_metadata[i].scene_id.split("/")[-1]
+            self._env_idx_to_scene[i] = scene
             if scene not in self._scene_object_centers:
                 self._scene_object_centers[scene] = envs.call_at(
                     i, "get_object_centers"
@@ -973,34 +1021,84 @@ class GroundTruthPerceptionGraphGenerator:
                 self._scene_instance_id_to_label_dist_cache[scene] = (
                     build_semantic_instance_to_id_map(envs, i)
                 )
+        # print(f"\tScene Update Time: {time.perf_counter() - t0_scene_update:.2f}s")
 
-            self._update_graph(
+        for i, done in enumerate(dones):
+            if done:
+                # Done is true on the first step of a new episode.
+                if self._use_remote_mappers:
+                    scene = self._env_idx_to_scene[i]
+                    object_centers = self._scene_object_centers[scene]
+                    self._mappers[i].reset.remote(object_centers)
+                    self._graphs[i] = nx.Graph()
+                else:
+                    self._mappers[i] = self._make_mapper_fn()
+                    self._graphs[i] = nx.Graph()
+
+        t0_submit = time.perf_counter()
+        # Update graphs
+        graph_futures = []
+
+        for i, (graph, mapper, obs) in enumerate(
+            zip(self._graphs, self._mappers, observations)
+        ):
+            graph_future = self._get_updated_graph(
                 graph,
                 mapper,
                 obs["rgb"],
                 obs["semantic"],
                 obs["depth"],
                 self._scene_object_centers[scene],
-                self._scene_instance_id_to_label_dist_cache[scene],
             )
 
+            graph_futures.append(graph_future)
+        print(f"\tSubmission Time: {time.perf_counter() - t0_submit:.2f}s")
+
+        t0_get_graphs = time.perf_counter()
+        if self._use_remote_mappers:
+            import ray
+
+            self._graphs = [ray.get(f) for f in graph_futures]
+        else:
+            self._graphs = graph_futures
+        print(f"\tRetrieval Time: {time.perf_counter() - t0_get_graphs:.2f}s")
+
+        t0_labeling = time.perf_counter()
+        # for graph in self._graphs:
+        #     self._add_instance_labels(
+        #         graph, self._scene_instance_id_to_label_dist_cache[scene]
+        #     )
+        print(f"\tLabeling Time: {time.perf_counter() - t0_labeling:.2f}s")
+        print(f"Generation Time: {time.perf_counter() - t0_gen:.2f}s")
         return {"gt_perception_graph": self._graphs}
 
-    @staticmethod
-    def _update_graph(
-        graph, mapper, rgb, semantic, depth, object_centers, instance_id_to_label_dist
+    def get_final_data(self, env_idx):
+        graph = self._mappers[env_idx].graph.remote()
+        graph = ray.get(graph)
+        scene = self._env_idx_to_scene[env_idx]
+        self._add_instance_labels(
+            graph, self._scene_instance_id_to_label_dist_cache[scene]
+        )
+        return {"gt_perception_graph": graph}
+
+    def _get_updated_graph(
+        self,
+        graph,
+        mapper,
+        rgb,
+        semantic,
+        depth,
+        object_centers,
     ):
         semantic = semantic[..., 0]
 
-        mapper.update(graph, object_centers, rgb, semantic, depth)
+        if self._use_remote_mappers:
+            return mapper.update.remote(rgb, semantic, None)
+            # return mapper.update.remote(graph, object_centers, rgb, semantic, None)
+        else:
+            return mapper.update(graph, object_centers, rgb, semantic, None)
 
-        graph = GroundTruthPerceptionGraphGenerator._add_instance_labels(
-            graph, instance_id_to_label_dist
-        )
-        return graph
-
-    @staticmethod
-    def _add_instance_labels(graph, instance_id_to_label_dist):
+    def _add_instance_labels(self, graph, instance_id_to_label_dist):
         new_nodes = [
             (n, attr) for n, attr in graph.nodes(data=True) if "label" not in attr
         ]
@@ -1015,8 +1113,6 @@ class GroundTruthPerceptionGraphGenerator:
             attr["label"] = label
             if label in OBJECTNAV_GOALS:
                 attr["goal_label"] = label
-
-        return graph
 
 
 class PredictedCostmapImageGenerator:
