@@ -287,12 +287,16 @@ class ObjectNavILMAENet(Net):
             # Channel-wise stack rgb and costmaps. This needs to occur before visual
             # transforms in order to apply the same augmentations:
             for costmap_name in self._costmap_names:
+                orig_shape = observations[costmap_name].shape
                 costmap = self._costmap_resize(observations[costmap_name])
 
                 # if costmap_name == "goal_costmap":
                 #     # Convert boolean goal_costmap to float (quick hack as the
                 #     # goal_costmap is only for testing currently):
                 #     costmap = costmap * 255.0
+                if rgb_obs.shape[:3] != costmap.shape[:3]:
+                    print("SHAPE MISMATCH")
+                    print(f"{rgb_obs.shape=} {costmap.shape=}")
 
                 # Channel stack:
                 rgb_obs = torch.cat([rgb_obs, costmap], dim=-1)

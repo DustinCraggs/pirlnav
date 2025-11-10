@@ -985,17 +985,22 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             for i in range(n_envs):
                 # episode ended
                 if not not_done_masks[i].item():
+                    stats_id = (
+                        current_episodes[i].scene_id,
+                        current_episodes[i].episode_id,
+                    )
+                    if stats_id in stats_episodes:
+                        # The env has already cycled through its episodes, and this is
+                        # a duplicate.
+                        continue
+
                     pbar.update()
                     episode_stats = {"reward": current_episode_reward[i].item()}
                     episode_stats.update(self._extract_scalars_from_info(infos[i]))
                     current_episode_reward[i] = 0
+
                     # use scene_id + episode_id as unique id for storing stats
-                    stats_episodes[
-                        (
-                            current_episodes[i].scene_id,
-                            current_episodes[i].episode_id,
-                        )
-                    ] = episode_stats
+                    stats_episodes[stats_id] = episode_stats
 
                     self.log_running_eval_stats(stats_episodes, writer, profiler)
 
@@ -1008,17 +1013,24 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
                         profiler.enter("write_video")
 
-                        generate_video(
-                            video_option=self.config.VIDEO_OPTION,
-                            video_dir=self.config.VIDEO_DIR,
-                            images=rgb_frames[i],
-                            episode_id=ep_id,
-                            checkpoint_idx=checkpoint_index,
-                            metrics=self._extract_scalars_from_info(infos[i]),
-                            fps=self.config.VIDEO_FPS,
-                            tb_writer=writer,
-                            keys_to_include_in_name=self.config.EVAL_KEYS_TO_INCLUDE_IN_NAME,
-                        )
+                        try:
+                            generate_video(
+                                video_option=self.config.VIDEO_OPTION,
+                                video_dir=self.config.VIDEO_DIR,
+                                images=rgb_frames[i],
+                                episode_id=ep_id,
+                                checkpoint_idx=checkpoint_index,
+                                metrics=self._extract_scalars_from_info(infos[i]),
+                                fps=self.config.VIDEO_FPS,
+                                tb_writer=writer,
+                                keys_to_include_in_name=self.config.EVAL_KEYS_TO_INCLUDE_IN_NAME,
+                            )
+                        except Exception as e:
+                            print(
+                                f"Warning: Exception {e} occurred when trying to write "
+                                f"video for episode {ep_id}."
+                            )
+                            print(f"{[frame.shape for frame in rgb_frames[i]]}")
 
                         profiler.exit("write_video")
 
@@ -1034,6 +1046,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         current_episodes[i].episode_id,
                     ) in stats_episodes:
                         envs_to_pause.append(i)
+                        self.data_generator.pause_env(i)
+
+                    print("PAUSING 5")
+                    envs_to_pause.append(5)
 
                 # episode continues
                 if len(self.config.VIDEO_OPTION) > 0:
@@ -1052,30 +1068,37 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             profiler.enter("pause_envs")
 
             not_done_masks = not_done_masks.to(device=self.device)
-            (
-                self.envs,
-                test_recurrent_hidden_states,
-                not_done_masks,
-                current_episode_reward,
-                prev_actions,
-                batch,
-                rgb_frames,
-            ) = self._pause_envs(
-                envs_to_pause,
-                self.envs,
-                test_recurrent_hidden_states,
-                not_done_masks,
-                current_episode_reward,
-                prev_actions,
-                batch,
-                rgb_frames,
-            )
+            # (
+            #     self.envs,
+            #     test_recurrent_hidden_states,
+            #     not_done_masks,
+            #     current_episode_reward,
+            #     prev_actions,
+            #     batch,
+            #     rgb_frames,
+            # ) = self._pause_envs(
+            #     envs_to_pause,
+            #     self.envs,
+            #     test_recurrent_hidden_states,
+            #     not_done_masks,
+            #     current_episode_reward,
+            #     prev_actions,
+            #     batch,
+            #     rgb_frames,
+            # )
+            # TODO: Check below:
             # Also drop the paused envs' current observations, as these are used by
             # the PVR generator (easier than grabbing it from the batch, which has
             # already been updated to reflect paused envs):
-            observations = [
-                obs for i, obs in enumerate(observations) if i not in envs_to_pause
-            ]
+            # observations = [
+            #     obs for i, obs in enumerate(observations) if i not in envs_to_pause
+            # ]
+            # current_episodes = [
+            #     ep for i, ep in enumerate(current_episodes) if i not in envs_to_pause
+            # ]
+
+            # if envs_to_pause:
+            #     print(f"Paused {len(envs_to_pause)} envs.")
 
             profiler.exit("pause_envs")
             profiler.exit("entire_eval_iter")

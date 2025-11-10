@@ -108,10 +108,10 @@ REPRESENTATION_GENERATOR:
   skip_look_actions: False
   generate_skip_index: False
   data_generators:
-    raw_image:
-      resize_and_crop_to: 256
+    # raw_image:
+    #   resize_and_crop_to: 256
     # agent_state:
-    non_visual:
+    # non_visual:
     # clip:
     #   use_float16: True
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
@@ -121,14 +121,14 @@ REPRESENTATION_GENERATOR:
     #   max_descriptor_update_image_frac: 0.3
     #   use_remote_mappers: False
     # costmap_visualisation:
-    #   model_path: "/home/dc/data/nav_experiments/cost_predictor/test100_norm_cost_20251103_192908/epoch_999.pth"
+    #   model_path: "/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_999.pth"
     #   costed_segment_max: 0.8
     #   edge_weight_name: "e3d"
     #   resize_and_crop_to: 256
-    #   max_descriptor_update_image_frac: 1.0
+    #   max_descriptor_update_image_frac: 0.3
     #   use_remote_mappers: False
     #   use_loaded_gt_graphs: True
-    #   graph_base_path: /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/gt_perception_graphs_fix_goal_labels_max_frac_w_desc_new/
+    #   graph_base_path: /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/gt_perception_graphs_fix_ep_metadata_w_descriptors
     #   graph_name: gt_perception_graph_label_descriptors.pkl.gz
     #   use_log_costs: True
     #   label_attribute: label
@@ -142,9 +142,9 @@ REPRESENTATION_GENERATOR:
       # max_descriptor_update_image_frac: 1.0
   data_storage:
     output_path: /storage/dc/pvr_data/default
-    # name: "video"
+    name: "video"
     # name: "graph"
-    name: "zarr"
+    # name: "zarr"
     # name: "nomad"
     kwargs:
       batch_chunk_size: 1000
@@ -162,7 +162,8 @@ PVR:
   # pvr_keys: ["last_two_hidden_layers"]
   # pvr_keys: ["goal_costmap"]
   # pvr_keys: ["gt_costmap"]
-  pvr_keys: ["rgb", "predicted_costmap"]
+  # pvr_keys: ["rgb", "predicted_costmap"]
+  pvr_keys: ["predicted_costmap"]
   # pvr_keys: ["rgb", "goal_costmap"]
   # pvr_keys: ["rgb", "gt_costmap"]
   # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]

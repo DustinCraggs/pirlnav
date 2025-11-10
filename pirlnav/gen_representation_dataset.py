@@ -953,6 +953,11 @@ class GroundTruthPerceptionGraphGenerator:
         envs,
         skipped_last,
     ):
+        print(f"{len(ep_metadata)=}")
+        print(f"{len(observations)=}")
+        print(f"{len(dones)=}")
+        print(f"{envs.num_envs=}")
+
         for i, done in enumerate(dones):
             if done:
                 # Done is true on the first step of a new episode.
@@ -1203,8 +1208,8 @@ class CostmapVisualisationGenerator:
 
         def process_costmap(cm):
             cm = cm.squeeze(-1).astype(np.uint8)
-            # cm = cv2.applyColorMap(cm, cv2.COLORMAP_SUMMER)
-            cm = cv2.applyColorMap(cm, cv2.COLORMAP_WINTER)
+            cm = cv2.applyColorMap(cm, cv2.COLORMAP_SUMMER)
+            # cm = cv2.applyColorMap(cm, cv2.COLORMAP_WINTER)
             return cm
 
         costmaps = [process_costmap(cm) for cm in costmaps]
