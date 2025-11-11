@@ -11,7 +11,7 @@ import cv2
 import einops
 import numpy as np
 
-import ray
+# import ray
 import torch
 import torchvision
 import zarr
@@ -39,8 +39,8 @@ from PIL import Image
 
 
 # TODO: Temporary hack as these are not accessible as installable packages:
-sys.path.append("/storage/dc/sg/sg_habitat")
-# sys.path.append("/home/dc/sg_new/sg_habitat")
+# sys.path.append("/storage/dc/sg/sg_habitat")
+sys.path.append("/home/dc/sg_new/sg_habitat")
 from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
 from libs.mapper.parallel_mapper import (
     SimIncrementalMapper as RemoteSimIncrementalMapper,
@@ -1202,7 +1202,7 @@ class PredictedCostmapImageGenerator:
                 self._descriptor_generator.get_text_descriptors([goal])[0]
             )
 
-        goal_descriptor = self._goal_descriptor_cache[goal].unsqueeze(0)
+        goal_descriptor = torch.tensor(self._goal_descriptor_cache[goal]).unsqueeze(0)
 
         costs = predict_path_lengths(
             self._cost_predictor,

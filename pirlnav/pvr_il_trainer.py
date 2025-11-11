@@ -887,6 +887,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         # while True:
         while len(stats_episodes) < number_of_eval_episodes and self.envs.num_envs > 0:
+            print(f"Loop start - collected {len(stats_episodes)} / {number_of_eval_episodes}")
+
             profiler.enter("entire_eval_iter")
             profiler.enter("get_actions")
 
@@ -904,6 +906,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 # prev_actions.copy_(torch.tensor([[observations[0]["next_actions"]]]))  # type: ignore
                 # prev_actions.copy_(torch.tensor([[0]]))  # type: ignore
                 prev_actions.copy_(actions)  # type: ignore
+
+                # Uncomment to end every episode on the first step for testing:
+                # actions = torch.zeros_like(actions)
 
             # NB: Move actions to CPU.  If CUDA tensors are
             # sent in to env.step(), that will create CUDA contexts
@@ -989,7 +994,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         current_episodes[i].scene_id,
                         current_episodes[i].episode_id,
                     )
+                    print(f"Logging episode: {stats_id}")
+                    print(f"{len(stats_episodes)=}")
                     if stats_id in stats_episodes:
+                        print(f"Duplicate episode: {stats_id}")
                         # The env has already cycled through its episodes, and this is
                         # a duplicate.
                         continue
@@ -1002,6 +1010,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     # use scene_id + episode_id as unique id for storing stats
                     stats_episodes[stats_id] = episode_stats
 
+                    print(f"Logging running stats {len(stats_episodes)=}")
                     self.log_running_eval_stats(stats_episodes, writer, profiler)
 
                     if len(self.config.VIDEO_OPTION) > 0:
@@ -1046,10 +1055,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                         current_episodes[i].episode_id,
                     ) in stats_episodes:
                         envs_to_pause.append(i)
-                        self.data_generator.pause_env(i)
-
-                    print("PAUSING 5")
-                    envs_to_pause.append(5)
 
                 # episode continues
                 if len(self.config.VIDEO_OPTION) > 0:
@@ -1102,6 +1107,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
             profiler.exit("pause_envs")
             profiler.exit("entire_eval_iter")
+
+        # Dump raw stats to json:
+        with open("stats.json", "w") as f:
+            json.dump(stats_episodes, f)
 
         num_episodes = len(stats_episodes)
         aggregated_stats = {}
@@ -1166,6 +1175,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         # Write intermediate stats:
         # TODO: The last done envs are not being logged, as done=true
         # only on the next step.
+        # Disabling pausing of envs fixed the above issue.
         num_episodes_completed = len(stats_episodes)
         writer.add_scalar(
             "performance/num_episodes_completed",

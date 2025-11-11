@@ -38,9 +38,18 @@ cd habitat-sim/
 pip install -r requirements.txt
 python setup.py install --headless
 
+cd ..
 pip install -r habitat-lab/habitat_baselines/il/requirements.txt
+pip install -e habitat-lab
+pip install -e .
 
-pip install zarr
+pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+pip install zarr ifcfg einops strictfire natsort hydra-core wandb==0.19.8 numpy==1.24.0
+
+# sg_habitat:
+pip install transformers h5py
+conda install spatialmath-python
+pip install git+https://github.com/openai/CLIP.git
 ```
 
 Run the following commands:

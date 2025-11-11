@@ -117,9 +117,9 @@ REPRESENTATION_GENERATOR:
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
     # ground_truth_costmap:
     #   resize_and_crop_to: 128
-    ground_truth_perception_graph:
-      max_descriptor_update_image_frac: 0.3
-      use_remote_mappers: False
+    # ground_truth_perception_graph:
+    #   max_descriptor_update_image_frac: 0.3
+    #   use_remote_mappers: False
     # costmap_visualisation:
     #   model_path: "/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_999.pth"
     #   costed_segment_max: 0.8
@@ -131,11 +131,11 @@ REPRESENTATION_GENERATOR:
     #   graph_name: gt_perception_graph_label_descriptors.pkl.gz
     #   use_log_costs: True
     #   label_attribute: label
-    # predicted_costmap:
-    #   model_path: "/home/dc/data/nav_experiments/cost_predictor/norm_cost_goal_idx_fixes_2_20251103_201255/epoch_199.pth"
-    #   edge_weight_name: "e3d"
-    #   resize_and_crop_to: 128
-    #   max_descriptor_update_image_frac: 0.3
+    predicted_costmap:
+      model_path: "/home/dc/data/nav_experiments/cost_predictor/norm_cost_goal_idx_fixes_2_20251103_201255/epoch_199.pth"
+      edge_weight_name: "e3d"
+      resize_and_crop_to: 128
+      max_descriptor_update_image_frac: 0.3
       # filter_labels: ["floor", "ceiling"]
       # max_descriptor_update_image_frac: 1.0
   data_storage:
