@@ -937,10 +937,10 @@ class GroundTruthPerceptionGraphGenerator:
         self.data_names = ["gt_perception_graph"]
         self._use_remote_mappers = use_remote_mappers
 
-        descriptor_generator = ClipDescriptorGenerator()
+        # self._descriptor_generator = ClipDescriptorGenerator()
         self._make_mapper_fn = lambda: SimIncrementalMapper(
             max_descriptor_update_image_frac=max_descriptor_update_image_frac,
-            descriptor_generator=descriptor_generator,
+            # descriptor_generator=self._descriptor_generator,
         )
 
         self._mappers = [None for _ in range(num_envs)]
@@ -1007,9 +1007,8 @@ class GroundTruthPerceptionGraphGenerator:
         envs,
         skipped_last,
     ):
-        t0_gen = time.perf_counter()
+        # t0_gen = time.perf_counter()
 
-        # t0_scene_update = time.perf_counter()
         # Update scene instances:
         for i in range(len(observations)):
             scene = ep_metadata[i].scene_id.split("/")[-1]
@@ -1021,7 +1020,6 @@ class GroundTruthPerceptionGraphGenerator:
                 self._scene_instance_id_to_label_dist_cache[scene] = (
                     build_semantic_instance_to_id_map(envs, i)
                 )
-        # print(f"\tScene Update Time: {time.perf_counter() - t0_scene_update:.2f}s")
 
         for i, done in enumerate(dones):
             if done:
@@ -1035,7 +1033,6 @@ class GroundTruthPerceptionGraphGenerator:
                     self._mappers[i] = self._make_mapper_fn()
                     self._graphs[i] = nx.Graph()
 
-        t0_submit = time.perf_counter()
         # Update graphs
         graph_futures = []
 
@@ -1052,24 +1049,19 @@ class GroundTruthPerceptionGraphGenerator:
             )
 
             graph_futures.append(graph_future)
-        print(f"\tSubmission Time: {time.perf_counter() - t0_submit:.2f}s")
 
-        t0_get_graphs = time.perf_counter()
         if self._use_remote_mappers:
             import ray
 
             self._graphs = [ray.get(f) for f in graph_futures]
         else:
             self._graphs = graph_futures
-        print(f"\tRetrieval Time: {time.perf_counter() - t0_get_graphs:.2f}s")
 
-        t0_labeling = time.perf_counter()
         # for graph in self._graphs:
         #     self._add_instance_labels(
         #         graph, self._scene_instance_id_to_label_dist_cache[scene]
         #     )
-        print(f"\tLabeling Time: {time.perf_counter() - t0_labeling:.2f}s")
-        print(f"Generation Time: {time.perf_counter() - t0_gen:.2f}s")
+        # print(f"Generation Time: {time.perf_counter() - t0_gen:.2f}s")
         return {"gt_perception_graph": self._graphs}
 
     def get_final_data(self, env_idx):

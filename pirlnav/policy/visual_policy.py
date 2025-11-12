@@ -301,14 +301,15 @@ class ObjectNavILMAENet(Net):
                 # Channel stack:
                 rgb_obs = torch.cat([rgb_obs, costmap], dim=-1)
 
-            observations["rgb"] = rgb_obs
-            if len(rgb_obs.size()) == 5:
-                observations["rgb"] = rgb_obs.contiguous().view(
-                    -1, rgb_obs.size(2), rgb_obs.size(3), rgb_obs.size(4)
-                )
+            # observations["rgb"] = rgb_obs
+            # if len(rgb_obs.size()) == 5:
+            #     observations["rgb"] = rgb_obs.contiguous().view(
+            #         -1, rgb_obs.size(2), rgb_obs.size(3), rgb_obs.size(4)
+            #     )
 
             # visual encoder
-            rgb = observations["rgb"]
+            # rgb = observations["rgb"]
+            rgb = rgb_obs
             rgb = self.visual_transform(rgb, N)
             rgb = self.visual_encoder(rgb)
             rgb = self.visual_fc(rgb)
