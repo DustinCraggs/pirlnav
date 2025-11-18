@@ -136,6 +136,7 @@ REPRESENTATION_GENERATOR:
       edge_weight_name: "e3d"
       resize_and_crop_to: 128
       max_descriptor_update_image_frac: 0.3
+      use_remote_mappers: True
       # filter_labels: ["floor", "ceiling"]
       # max_descriptor_update_image_frac: 1.0
   data_storage:

@@ -925,6 +925,7 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         return instance_to_cost
 
 
+# RAY_BACKEND_LOG_LEVEL=error RAY_prestart_worker_first_driver=0
 class GroundTruthPerceptionGraphGenerator:
 
     def __init__(
@@ -932,28 +933,32 @@ class GroundTruthPerceptionGraphGenerator:
         num_envs,
         max_descriptor_update_image_frac,
         use_remote_mappers=False,
+        cost_predictor=None,
         **kwargs,
     ):
         self.data_names = ["gt_perception_graph"]
         self._use_remote_mappers = use_remote_mappers
 
-        # self._descriptor_generator = ClipDescriptorGenerator()
+        self._descriptor_generator = ClipDescriptorGenerator()
         self._make_mapper_fn = lambda: SimIncrementalMapper(
             max_descriptor_update_image_frac=max_descriptor_update_image_frac,
-            # descriptor_generator=self._descriptor_generator,
+            descriptor_generator=self._descriptor_generator,
         )
 
         self._mappers = [None for _ in range(num_envs)]
         self._graphs = [None for _ in range(num_envs)]
 
-        path = f"/storage/dc/sg/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
-
         if self._use_remote_mappers:
             import ray
+            from ray import serve
 
+            # path = f"/storage/dc/sg/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
+            path = f"/home/dc/sg_new/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
             ray.init(
-                logging_level=logging.WARNING,
                 runtime_env={"env_vars": {"PYTHONPATH": path}},
+                include_dashboard=False,
+                log_to_driver=False,
+                logging_level=logging.WARNING,
                 # dashboard_host="0.0.0.0",
             )
 
@@ -961,10 +966,11 @@ class GroundTruthPerceptionGraphGenerator:
             # RemoteDescriptorGenerator = ray.remote(num_cpus=0.1, num_gpus=0.1)(
             #     ClipDescriptorGenerator
             # )
-            RemoteDescriptorGenerator = ray.serve.deployment(
+            RemoteDescriptorGenerator = serve.deployment(
                 num_replicas=num_clip_workers,
                 max_ongoing_requests=100,
                 ray_actor_options={"num_cpus": 0.1, "num_gpus": 0.1},
+                logging_config={"log_level": "WARNING"},
             )(ClipDescriptorGenerator)
 
             descriptor_generator = RemoteDescriptorGenerator.bind()
@@ -981,11 +987,10 @@ class GroundTruthPerceptionGraphGenerator:
             self._mappers = [
                 RemoteSimIncrementalMapper.remote(
                     descriptor_generator_worker=[handle],
-                    # descriptor_generator_worker=[
-                    #     descriptor_actors[i % num_clip_workers]
-                    # ],
-                    # descriptor_generator_worker=descriptor_actors,
                     max_descriptor_update_image_frac=max_descriptor_update_image_frac,
+                    cost_predictor=cost_predictor,
+                    node_attributes=["visual_descriptor"],
+                    edge_weight_name="e3d",
                 )
                 for i in range(num_envs)
             ]
@@ -1006,6 +1011,8 @@ class GroundTruthPerceptionGraphGenerator:
         infos,
         envs,
         skipped_last,
+        return_costmaps=False,
+        goal_descriptors=None,
     ):
         # t0_gen = time.perf_counter()
 
@@ -1032,6 +1039,9 @@ class GroundTruthPerceptionGraphGenerator:
                 else:
                     self._mappers[i] = self._make_mapper_fn()
                     self._graphs[i] = nx.Graph()
+
+        if return_costmaps:
+            return self.generate_costmaps(goal_descriptors, observations)
 
         # Update graphs
         graph_futures = []
@@ -1063,6 +1073,24 @@ class GroundTruthPerceptionGraphGenerator:
         #     )
         # print(f"Generation Time: {time.perf_counter() - t0_gen:.2f}s")
         return {"gt_perception_graph": self._graphs}
+
+    def generate_costmaps(self, goal_descriptors, observations):
+        if not self._use_remote_mappers:
+            raise ValueError(
+                "Costmap generation with non-remote mappers is not supported."
+            )
+
+        import ray
+
+        costmap_futures = []
+
+        for i, obs in enumerate(observations):
+            costmap_f = self._mappers[i].update_and_get_costmap.remote(
+                obs["rgb"], obs["semantic"][..., 0], None, goal_descriptors[i]
+            )
+            costmap_futures.append(costmap_f)
+
+        return ray.get(costmap_futures)
 
     def get_final_data(self, env_idx):
         graph = self._mappers[env_idx].graph.remote()
@@ -1117,14 +1145,14 @@ class PredictedCostmapImageGenerator:
         resize_and_crop_to=None,
         costed_segment_max=0.8,
         max_seq_len=300,
+        use_remote_mappers=False,
         **kwargs,
     ):
         self._edge_weight_name = edge_weight_name
         self._cost_scale = costed_segment_max
         self._max_seq_len = max_seq_len
+        self._use_remote_mappers = use_remote_mappers
 
-        # TODO: Support different graph generators
-        self._graph_generator = GroundTruthPerceptionGraphGenerator(num_envs, **kwargs)
         self._descriptor_generator = ClipDescriptorGenerator()
         self._cost_predictor, train_config = load_checkpoint(model_path)
         self._cost_predictor.eval()
@@ -1132,11 +1160,19 @@ class PredictedCostmapImageGenerator:
         self._goal_attributes = train_config.dataset.goal_attributes
         self._node_attributes = train_config.dataset.node_attributes
 
+        # TODO: Support different graph generators
+        self._graph_generator = GroundTruthPerceptionGraphGenerator(
+            num_envs,
+            use_remote_mappers=use_remote_mappers,
+            cost_predictor=self._cost_predictor,
+            node_attributes=self._node_attributes,
+            **kwargs,
+        )
+
         self.data_names = ["predicted_costmap"]
 
         # TODO: Create cachedict class?
         self._goal_descriptor_cache = {}
-        self._visual_descriptor_cache = [{} for _ in range(num_envs)]
 
         self._transforms = []
         if resize_and_crop_to:
@@ -1157,10 +1193,18 @@ class PredictedCostmapImageGenerator:
         skipped_last,
         return_tensors=False,
     ):
-        for i, done in enumerate(dones):
-            if done:
-                # Clear the visual descriptor cache for this environment:
-                self._visual_descriptor_cache[i] = {}
+        if self._use_remote_mappers:
+            return self._get_costmap_parallel(
+                ep_metadata,
+                actions,
+                observations,
+                rewards,
+                dones,
+                infos,
+                envs,
+                skipped_last,
+                return_tensors,
+            )
 
         graph_data = self._graph_generator.generate(
             ep_metadata,
@@ -1187,6 +1231,50 @@ class PredictedCostmapImageGenerator:
             costmaps.append(costmap)
 
         return {"predicted_costmap": costmaps}
+
+    def _get_costmap_parallel(
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+        return_tensors=False,
+    ):
+        goal_descriptors = self._get_goal_descriptors(ep_metadata)
+        costmaps = self._graph_generator.generate(
+            ep_metadata,
+            actions,
+            observations,
+            rewards,
+            dones,
+            infos,
+            envs,
+            skipped_last,
+            return_costmaps=True,
+            goal_descriptors=goal_descriptors,
+        )
+
+        costmaps = np.array(costmaps)
+
+        if self._transforms:
+            costmaps = [self._apply_transforms(costmap) for costmap in costmaps]
+
+        return {"predicted_costmap": costmaps}
+
+    def _get_goal_descriptors(self, ep_metadata):
+        goals = [ep.object_category for ep in ep_metadata]
+
+        for g in goals:
+            if g not in self._goal_descriptor_cache:
+                descriptor = self._descriptor_generator.get_text_descriptors([g])[0]
+                descriptor = torch.tensor(descriptor).unsqueeze(0)
+                self._goal_descriptor_cache[g] = descriptor
+
+        return [self._goal_descriptor_cache[g] for g in goals]
 
     def _get_costmap(self, mapper, graph, goal):
         if goal not in self._goal_descriptor_cache:

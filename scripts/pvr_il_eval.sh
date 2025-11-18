@@ -30,7 +30,7 @@ python -u -m run \
     VIDEO_DIR "$DATA_DIR/videos/$GROUP_NAME/$EXP_NAME" \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \
-    NUM_ENVIRONMENTS 20 \
+    NUM_ENVIRONMENTS 10 \
     EVAL.SPLIT "val" \
     EVAL.USE_CKPT_CONFIG False \
     TASK_CONFIG.DATASET.TYPE "ObjectNav-v1" \
