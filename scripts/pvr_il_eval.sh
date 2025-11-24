@@ -26,7 +26,7 @@ python -u -m run \
     WB.PROJECT_NAME habitat-bc-eval \
     WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
-    WB.MODE disabled \
+    WB.MODE online \
     VIDEO_DIR "$DATA_DIR/videos/$GROUP_NAME/$EXP_NAME" \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \

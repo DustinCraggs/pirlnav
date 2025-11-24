@@ -621,6 +621,11 @@ class RepresentationGenerator:
                     )
                     if ep_key in self._remaining_ep_set:
                         self._remaining_ep_set.remove(ep_key)
+
+                        final_data = self._get_final_data(i)
+                        if final_data:
+                            ep.append(final_data)
+
                         # Each element of ep is a dict. Concat each value into a
                         # separate array:
                         self._data_storage.save_episode(ep, *ep_key)
@@ -630,8 +635,8 @@ class RepresentationGenerator:
                         movement_step_counts[i] = 0
                         pbar.update(1)
                         c += 1
-                        if c > 200:
-                            exit()
+                        # if c > 200:
+                        #     exit()
                     else:
                         print(f"Duplicate episode {ep_key} (skipping)")
 
@@ -871,7 +876,6 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         }
 
         if use_log_costs:
-            # Use log costs to avoid large values:
             instance_to_cost = {
                 instance_id: np.log(cost + 1) if np.isfinite(cost) else np.inf
                 for instance_id, cost in instance_to_cost.items()
@@ -1061,24 +1065,26 @@ class GroundTruthPerceptionGraphGenerator:
             self._graphs = [ray.get(f) for f in graph_futures]
         else:
             self._graphs = graph_futures
+            for graph in self._graphs:
+                self._add_instance_labels(
+                    graph, self._scene_instance_id_to_label_dist_cache[scene]
+                )
         print(f"\tRetrieval Time: {time.perf_counter() - t0_get_graphs:.2f}s")
 
-        t0_labeling = time.perf_counter()
-        # for graph in self._graphs:
-        #     self._add_instance_labels(
-        #         graph, self._scene_instance_id_to_label_dist_cache[scene]
-        #     )
-        print(f"\tLabeling Time: {time.perf_counter() - t0_labeling:.2f}s")
         print(f"Generation Time: {time.perf_counter() - t0_gen:.2f}s")
         return {"gt_perception_graph": self._graphs}
 
     def get_final_data(self, env_idx):
-        graph = self._mappers[env_idx].graph.remote()
+        if not self._use_remote_mappers:
+            return {"gt_perception_graph": self._graphs[env_idx]}
+
+        graph = self._mappers[env_idx].get_graph.remote()
         graph = ray.get(graph)
         scene = self._env_idx_to_scene[env_idx]
         self._add_instance_labels(
             graph, self._scene_instance_id_to_label_dist_cache[scene]
         )
+        print(f"get_final_data {graph=}")
         return {"gt_perception_graph": graph}
 
     def _get_updated_graph(
