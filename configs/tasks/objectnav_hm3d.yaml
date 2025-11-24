@@ -108,10 +108,10 @@ REPRESENTATION_GENERATOR:
   skip_look_actions: False
   generate_skip_index: False
   data_generators:
-    # raw_image:
-    #   resize_and_crop_to: 256
+    raw_image:
+      resize_and_crop_to: 256
     # agent_state:
-    # non_visual:
+    non_visual:
     # clip:
     #   use_float16: True
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
@@ -132,18 +132,19 @@ REPRESENTATION_GENERATOR:
     #   use_log_costs: True
     #   label_attribute: label
     predicted_costmap:
-      model_path: "/home/dc/data/nav_experiments/cost_predictor/norm_cost_goal_idx_fixes_2_20251103_201255/epoch_199.pth"
+      model_path: "/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_199.pth"
+      # model_path: "/home/dc/data/nav_experiments/cost_predictor/norm_cost_goal_idx_fixes_2_20251103_201255/epoch_199.pth"
       edge_weight_name: "e3d"
       resize_and_crop_to: 128
       max_descriptor_update_image_frac: 0.3
-      use_remote_mappers: True
+      use_remote_mappers: False
       # filter_labels: ["floor", "ceiling"]
       # max_descriptor_update_image_frac: 1.0
   data_storage:
     output_path: /storage/dc/pvr_data/default
-    name: "video"
+    # name: "video"
     # name: "graph"
-    # name: "zarr"
+    name: "zarr"
     # name: "nomad"
     kwargs:
       batch_chunk_size: 1000

@@ -1120,10 +1120,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             # profiler.exit("pause_envs")
             profiler.exit("entire_eval_iter")
 
-        # Dump raw stats to json:
-        with open("stats.json", "w") as f:
-            json.dump(stats_episodes, f)
-
         num_episodes = len(stats_episodes)
         aggregated_stats = {}
         for stat_key in next(iter(stats_episodes.values())).keys():

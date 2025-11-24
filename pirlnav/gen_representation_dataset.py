@@ -12,6 +12,7 @@ import einops
 import numpy as np
 
 # import ray
+import ray
 import torch
 import torchvision
 import zarr
@@ -630,8 +631,8 @@ class RepresentationGenerator:
                         movement_step_counts[i] = 0
                         pbar.update(1)
                         c += 1
-                        if c > 200:
-                            exit()
+                        # if c > 200:
+                        #     exit()
                     else:
                         print(f"Duplicate episode {ep_key} (skipping)")
 
@@ -949,9 +950,6 @@ class GroundTruthPerceptionGraphGenerator:
         self._graphs = [None for _ in range(num_envs)]
 
         if self._use_remote_mappers:
-            import ray
-            from ray import serve
-
             # path = f"/storage/dc/sg/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
             path = f"/home/dc/sg_new/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
             ray.init(
@@ -966,7 +964,7 @@ class GroundTruthPerceptionGraphGenerator:
             # RemoteDescriptorGenerator = ray.remote(num_cpus=0.1, num_gpus=0.1)(
             #     ClipDescriptorGenerator
             # )
-            RemoteDescriptorGenerator = serve.deployment(
+            RemoteDescriptorGenerator = ray.serve.deployment(
                 num_replicas=num_clip_workers,
                 max_ongoing_requests=100,
                 ray_actor_options={"num_cpus": 0.1, "num_gpus": 0.1},
@@ -976,14 +974,6 @@ class GroundTruthPerceptionGraphGenerator:
             descriptor_generator = RemoteDescriptorGenerator.bind()
             handle = ray.serve.run(descriptor_generator)
 
-            # handle = ray.serve.get_app_handle()
-
-            # descriptor_generator_worker = ray.util.ActorPool(
-            #     [RemoteDescriptorGenerator.remote() for _ in range(num_clip_workers)]
-            # )
-            # descriptor_actors = [
-            #     RemoteDescriptorGenerator.remote() for _ in range(num_clip_workers)
-            # ]
             self._mappers = [
                 RemoteSimIncrementalMapper.remote(
                     descriptor_generator_worker=[handle],
@@ -1034,7 +1024,7 @@ class GroundTruthPerceptionGraphGenerator:
                 if self._use_remote_mappers:
                     scene = self._env_idx_to_scene[i]
                     object_centers = self._scene_object_centers[scene]
-                    self._mappers[i].reset.remote(object_centers)
+                    self._mappers[i].reset.remote(info=object_centers)
                     self._graphs[i] = nx.Graph()
                 else:
                     self._mappers[i] = self._make_mapper_fn()
@@ -1061,8 +1051,6 @@ class GroundTruthPerceptionGraphGenerator:
             graph_futures.append(graph_future)
 
         if self._use_remote_mappers:
-            import ray
-
             self._graphs = [ray.get(f) for f in graph_futures]
         else:
             self._graphs = graph_futures
@@ -1079,8 +1067,6 @@ class GroundTruthPerceptionGraphGenerator:
             raise ValueError(
                 "Costmap generation with non-remote mappers is not supported."
             )
-
-        import ray
 
         costmap_futures = []
 
