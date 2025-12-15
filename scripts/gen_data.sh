@@ -15,7 +15,7 @@ python run.py \
     --run-type gen \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $bc_dataset_path \
-    NUM_ENVIRONMENTS 10 \
+    NUM_ENVIRONMENTS 4 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_storage.output_path $output_dir \
     TASK_CONFIG.REPRESENTATION_GENERATOR.skip_look_actions False \

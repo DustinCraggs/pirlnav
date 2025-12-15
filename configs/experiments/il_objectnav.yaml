@@ -41,9 +41,9 @@ POLICY:
     no_critic: True
   RGB_ENCODER:
     # costmap_names: []
-    costmap_names: ["predicted_costmap"]
+    # costmap_names: ["predicted_costmap"]
     # costmap_names: ["gt_costmap"]
-    # costmap_names: ["goal_costmap"]
+    costmap_names: ["goal_costmap"]
 
 WB:
   ENTITY: gyo
