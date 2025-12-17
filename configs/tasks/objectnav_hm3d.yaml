@@ -108,7 +108,7 @@ REPRESENTATION_GENERATOR:
   skip_non_movement_actions: False
   skip_look_actions: False
   generate_skip_index: False
-  max_num_eps: 30
+  max_num_eps: null
   data_generators:
     # raw_image:
     #   resize_and_crop_to: 256
@@ -133,14 +133,15 @@ REPRESENTATION_GENERATOR:
       use_segmaster_matcher: False
       segmaster_config_path: /home/dc/sg_new/segmast3r/configs/config_eval_spp_resz.yaml
       segmaster_checkpoint_path: /home/dc/sg_new/segmast3r/checkpoints/segmast3r_spp.ckpt
-      vis_dir: temp/rollout_vis/30_eps/splg_k6_lctk8_lcrmc8_merge_matched_nodes
+      # vis_dir: temp/rollout_vis/30_eps/splg_k6_merge_matched_nodes
+      vis_dir: null
       use_gt_depth: False
       use_gt_segments: False
       use_segmaster_geometry: False
       remove_mask_edges: False
       use_loop_closure: True
-      loop_closure_exclusion_window: 8
-      loop_closure_top_k: 8
+      loop_closure_exclusion_window: 16
+      loop_closure_top_k: 4
       loop_closure_required_match_count: 8
 
     # costmap_visualisation:

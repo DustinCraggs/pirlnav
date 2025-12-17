@@ -257,9 +257,9 @@ class GraphDataStorage:
 
         # Save the episode index in case of early termination:
         ep_index_path = f"{self._output_path}/ep_index.txt"
-        with open(ep_index_path, "w") as f:
-            for ep in self._completed_eps:
-                f.write(f"{ep}\n")
+        with open(ep_index_path, "a") as f:
+            f.write(f"{ep_id}\n")
+            # for ep in self._completed_eps:
 
         # try:
         #     result = future.result()
@@ -491,9 +491,11 @@ class RepresentationGenerator:
     def __init__(self, config):
         self._envs, episodes = self._init_envs(config)
         self._num_envs = config["NUM_ENVIRONMENTS"]
-        self._max_num_eps = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"][
-            "max_num_eps"
-        ]
+        rep_gen_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
+        self._max_num_eps = rep_gen_config["max_num_eps"]
+
+        # Dump config to json:
+        self._write_config(rep_gen_config["data_storage"]["output_path"], config)
 
         self._remaining_ep_set = set(
             (ep["scene_id"], ep["episode_id"], ep["object_category"]) for ep in episodes
@@ -501,8 +503,6 @@ class RepresentationGenerator:
 
         self._data_generators = get_data_generators(config, self._num_envs)
         self._data_storage = get_data_storage(config, episodes=episodes)
-
-        rep_gen_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
 
         self._store_last_data_only = False
         if rep_gen_config["data_storage"]["name"] == "graph":
@@ -566,6 +566,11 @@ class RepresentationGenerator:
         )
 
         return envs, episodes
+
+    def _write_config(self, output_dir, config):
+        os.makedirs(output_dir, exist_ok=True)
+        with open(f"{output_dir}/hab_config.json", "w") as f:
+            json.dump(config, f, indent=4)
 
     def generate(self):
         # TODO: With a stride of 10, one scene-goal pair is missing
@@ -1259,16 +1264,21 @@ class GroundTruthPerceptionGraphGenerator:
             (n, attr) for n, attr in graph.nodes(data=True) if "label" not in attr
         ]
 
-        labels = [
-            instance_id_to_label_dist.get(attr["instance_id"], ["unknown"])[0]
+        label_lists = [
+            [
+                instance_id_to_label_dist.get(l, ["unknown"])[0]
+                for l in attr["sim_instance_ids"]
+            ]
             for n, attr in unlabelled_nodes
         ]
 
         # TODO: Add raw labels?
-        for (n, attr), label in zip(unlabelled_nodes, labels):
-            attr["label"] = label
-            if label in OBJECTNAV_GOALS:
-                attr["goal_label"] = label
+        for (n, attr), labels in zip(unlabelled_nodes, label_lists):
+            attr["labels"] = labels
+
+            goal_labels = [l for l in labels if l in OBJECTNAV_GOALS]
+            if goal_labels:
+                attr["goal_labels"] = [l for l in labels if l in OBJECTNAV_GOALS]
 
 
 class PredictedCostmapImageGenerator:
