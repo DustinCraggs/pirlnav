@@ -40,8 +40,10 @@ from PIL import Image
 
 
 # TODO: Temporary hack as these are not accessible as installable packages:
-sys.path.append("/storage/dc/sg/sg_habitat")
+# sys.path.append("/storage/dc/sg/sg_habitat")
 # sys.path.append("/home/dc/sg_new/sg_habitat")
+sys.path.append(os.environ.get("SG_HABITAT_PATH"))
+
 from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
 from libs.mapper.parallel_mapper import (
     SimIncrementalMapper as RemoteSimIncrementalMapper,
@@ -1024,8 +1026,9 @@ class GroundTruthPerceptionGraphGenerator:
         self._graphs = [None for _ in range(num_envs)]
 
         if self._use_remote_mappers and not use_inf_mapping:
-            path = f"/storage/dc/sg/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
-            # path = f"/home/dc/sg_new/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
+            sg_hab_path = os.environ.get("SG_HABITAT_PATH")
+            path = f"{sg_hab_path}:{os.environ.get('PYTHONPATH', '')}"
+
             ray.init(
                 runtime_env={
                     "env_vars": {
@@ -1034,9 +1037,9 @@ class GroundTruthPerceptionGraphGenerator:
                     }
                 },
                 include_dashboard=False,
-                # log_to_driver=False,
-                # logging_level=logging.WARNING,
-                # dashboard_host="0.0.0.0",
+                log_to_driver=False,
+                logging_level=logging.WARNING,
+                dashboard_host="0.0.0.0",
             )
 
             num_clip_workers = 2
@@ -1065,15 +1068,14 @@ class GroundTruthPerceptionGraphGenerator:
             ]
         elif use_inf_mapping:
             # TODO: Remove this:
-            sg_hab_path = "/storage/dc/sg/sg_habitat"
-            # sg_hab_path = "/home/dc/sg_new/sg_habitat"
+            sg_hab_path = os.environ.get("SG_HABITAT_PATH")
             path = f"{sg_hab_path}:{os.environ.get('PYTHONPATH', '')}"
             ray.init(
                 runtime_env={"env_vars": {"PYTHONPATH": path}},
                 include_dashboard=False,
-                # log_to_driver=False,
-                # logging_level=logging.WARNING,
-                # dashboard_host="0.0.0.0",
+                log_to_driver=False,
+                logging_level=logging.WARNING,
+                dashboard_host="0.0.0.0",
             )
 
             self._use_remote_mappers = True
@@ -1220,9 +1222,7 @@ class GroundTruthPerceptionGraphGenerator:
                     episode_id = ep_metadata[i].episode_id
                     goal = ep_metadata[i].object_category
                     object_centers = self._scene_object_centers[scene]
-                    instance_id_to_label = (
-                        self._scene_instance_id_to_label_cache[scene]
-                    )
+                    instance_id_to_label = self._scene_instance_id_to_label_cache[scene]
 
                     self._mappers[i].reset.remote(
                         info={
