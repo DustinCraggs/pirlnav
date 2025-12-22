@@ -15,12 +15,12 @@ python run.py \
     --run-type gen \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $bc_dataset_path \
-    NUM_ENVIRONMENTS 12 \
+    NUM_ENVIRONMENTS 10 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_storage.output_path $output_dir \
     TASK_CONFIG.REPRESENTATION_GENERATOR.skip_look_actions False \
     TASK_CONFIG.REPRESENTATION_GENERATOR.generate_skip_index False \
-    TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/full/initial_splg_lc_maps/ep_index.txt \
+    # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/full/initial_splg_lc_maps/ep_index.txt \
     # TASK_CONFIG.SIMULATOR.ACTION_SPACE_CONFIG "v1_no_op_look" \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/test/ep_index.txt \
     # DATASET.CONTENT_SCENES 

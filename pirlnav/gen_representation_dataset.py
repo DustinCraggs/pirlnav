@@ -40,8 +40,8 @@ from PIL import Image
 
 
 # TODO: Temporary hack as these are not accessible as installable packages:
-# sys.path.append("/storage/dc/sg/sg_habitat")
-sys.path.append("/home/dc/sg_new/sg_habitat")
+sys.path.append("/storage/dc/sg/sg_habitat")
+# sys.path.append("/home/dc/sg_new/sg_habitat")
 from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
 from libs.mapper.parallel_mapper import (
     SimIncrementalMapper as RemoteSimIncrementalMapper,
@@ -55,6 +55,8 @@ from libs.mapper.parallel_mapper import (
     LightGlueMatcher,
     SegmasterMatcher,
     get_descriptor_generator,
+    get_cost_predictor_worker,
+    CostPredictor,
 )
 from scripts.exploration.models import load_checkpoint
 from scripts.exploration.graph_dataset import get_cost_matrix, get_objectnav_cost_matrix
@@ -256,10 +258,9 @@ class GraphDataStorage:
         self._completed_eps.append(ep_id)
 
         # Save the episode index in case of early termination:
-        ep_index_path = f"{self._output_path}/ep_index.txt"
-        with open(ep_index_path, "a") as f:
+        completed_eps_path = f"{self._output_path}/completed_eps.txt"
+        with open(completed_eps_path, "a") as f:
             f.write(f"{ep_id}\n")
-            # for ep in self._completed_eps:
 
         # try:
         #     result = future.result()
@@ -322,10 +323,11 @@ class ZarrDataStorage:
         print(f"Total length {self._total_length}")
 
     def _init_zarr_file(self, data):
-        self._zarr_file = zarr.open(self._output_path, mode="w")
-        self._data_group = self._zarr_file.create_group("data")
+        # Don't overwrite existing, as there may have been a partially completed run:
+        self._zarr_file = zarr.open(self._output_path, mode="a")
+        self._data_group = self._zarr_file.create_group("data", overwrite=False)
         # In older versions of zarr, "meta*" names are reserved, so prefix with "_":
-        self._meta_group = self._zarr_file.create_group("_meta")
+        self._meta_group = self._zarr_file.create_group("_meta", overwrite=False)
 
         for key, data_array in data.items():
             chunks = [None] * len(data_array.shape)
@@ -335,6 +337,7 @@ class ZarrDataStorage:
                 shape=(self._total_length, *data_array.shape[1:]),
                 dtype=data_array.dtype,
                 chunks=chunks,
+                overwrite=False,
             )
 
     def save_episode(self, data, scene_id, episode_id, object_category):
@@ -372,6 +375,11 @@ class ZarrDataStorage:
         # TODO: Move to superclass:
         ep_index_path = f"{self._output_path}/ep_index.json"
         json.dump(self._completed_eps, open(ep_index_path, "w"))
+
+        ep_id = f"{scene_id}_{episode_id}_{object_category}"
+        completed_eps_path = f"{self._output_path}/completed_eps.txt"
+        with open(completed_eps_path, "a") as f:
+            f.write(f"{ep_id}\n")
 
     def close(self):
         pass
@@ -489,7 +497,7 @@ class NomadDataStorage:
 class RepresentationGenerator:
 
     def __init__(self, config):
-        self._envs, episodes = self._init_envs(config)
+        self._envs, episodes, all_episodes = self._init_envs(config)
         self._num_envs = config["NUM_ENVIRONMENTS"]
         rep_gen_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
         self._max_num_eps = rep_gen_config["max_num_eps"]
@@ -502,7 +510,8 @@ class RepresentationGenerator:
         )
 
         self._data_generators = get_data_generators(config, self._num_envs)
-        self._data_storage = get_data_storage(config, episodes=episodes)
+        # Pass all eps to data storage to allow for pre-allocation etc.:
+        self._data_storage = get_data_storage(config, episodes=all_episodes)
 
         self._store_last_data_only = False
         if rep_gen_config["data_storage"]["name"] == "graph":
@@ -534,6 +543,8 @@ class RepresentationGenerator:
         with open(sub_split_index_path, "r") as f:
             sub_split_index = json.load(f)
 
+        full_sub_split_index = sub_split_index.copy()
+
         filter_existing_path = config["TASK_CONFIG"]["DATASET"]["FILTER_EXISTING_PATH"]
         if filter_existing_path is not None:
             with open(filter_existing_path, "r") as f:
@@ -555,6 +566,7 @@ class RepresentationGenerator:
 
         ep_keys = ["scene_id", "episode_id", "object_category", "length"]
         episodes = [{k: ep[k] for k in ep_keys} for ep in sub_split_index]
+        all_episodes = [{k: ep[k] for k in ep_keys} for ep in full_sub_split_index]
 
         # env_cls = get_env_class(config["ENV_NAME"])
         envs = construct_envs(
@@ -565,7 +577,7 @@ class RepresentationGenerator:
             episode_index=sub_split_index,
         )
 
-        return envs, episodes
+        return envs, episodes, all_episodes
 
     def _write_config(self, output_dir, config):
         os.makedirs(output_dir, exist_ok=True)
@@ -965,7 +977,7 @@ class GroundTruthPerceptionGraphGenerator:
         hfov=None,
         segmentor_model_path=None,
         use_remote_mappers=False,
-        cost_predictor=None,
+        cost_predictor_checkpoint_path=None,
         use_inf_mapping=False,
         matching_window_size=3,
         num_kp_threshold=1,
@@ -997,8 +1009,8 @@ class GroundTruthPerceptionGraphGenerator:
         self._graphs = [None for _ in range(num_envs)]
 
         if self._use_remote_mappers and not use_inf_mapping:
-            # path = f"/storage/dc/sg/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
-            path = f"/home/dc/sg_new/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
+            path = f"/storage/dc/sg/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
+            # path = f"/home/dc/sg_new/sg_habitat:{os.environ.get('PYTHONPATH', '')}"
             ray.init(
                 runtime_env={
                     "env_vars": {
@@ -1038,7 +1050,8 @@ class GroundTruthPerceptionGraphGenerator:
             ]
         elif use_inf_mapping:
             # TODO: Remove this:
-            sg_hab_path = "/home/dc/sg_new/sg_habitat"
+            sg_hab_path = "/storage/dc/sg/sg_habitat"
+            # sg_hab_path = "/home/dc/sg_new/sg_habitat"
             path = f"{sg_hab_path}:{os.environ.get('PYTHONPATH', '')}"
             ray.init(
                 runtime_env={"env_vars": {"PYTHONPATH": path}},
@@ -1080,6 +1093,11 @@ class GroundTruthPerceptionGraphGenerator:
 
             self._mappers = []
 
+            if cost_predictor_checkpoint_path:
+                cost_predictor_worker = get_cost_predictor_worker(
+                    cost_predictor_checkpoint_path
+                )
+
             for i in range(num_envs):
                 descriptor_generator = get_descriptor_generator(clip_worker)
                 if use_segmaster_matcher:
@@ -1103,15 +1121,35 @@ class GroundTruthPerceptionGraphGenerator:
                         depth_worker, image_width, image_height, hfov=hfov
                     )
 
+                cost_predictor = None
+                if cost_predictor_checkpoint_path:
+                    _, config = load_checkpoint(cost_predictor_checkpoint_path)
+                    node_attributes = config["dataset"]["observation_attributes"]
+                    edge_weight_name = config["dataset"]["edge_weight_name"]
+
+                    cost_predictor = CostPredictor(
+                        cost_predictor_worker,
+                        node_attributes,
+                        edge_weight_name,
+                        image_height,
+                        image_width,
+                        cost_scale=0.8,
+                        max_seq_len=None,
+                        cost_pad_value=1.0,
+                    )
+
+                env_vis_dir = f"{vis_dir}/env_{i}" if vis_dir is not None else None
+
                 mapper = RemoteIncrementalMapper.remote(
                     segmentor=segmentor,
                     matcher=matcher,
                     geometry_updater=geometry_updater,
                     descriptor_generator=descriptor_generator,
+                    cost_predictor=cost_predictor,
                     min_segment_area=50,
                     max_descriptor_update_image_frac=0.3,
                     matching_window_size=matching_window_size,
-                    save_vis_dir=f"{vis_dir}/env_{i}",
+                    save_vis_dir=env_vis_dir,
                     add_matching_sim_segments=False,
                     use_gt_depth=use_gt_depth,
                     use_gt_segments=use_gt_segments,
@@ -1172,8 +1210,8 @@ class GroundTruthPerceptionGraphGenerator:
                     self._mappers[i] = self._make_mapper_fn()
                     self._graphs[i] = nx.Graph()
 
-        if return_costmaps:
-            return self.generate_costmaps(goal_descriptors, observations)
+        # if return_costmaps:
+        # return self.generate_costmaps(goal_descriptors, observations)
 
         # Update graphs
         graph_futures = []
@@ -1193,6 +1231,13 @@ class GroundTruthPerceptionGraphGenerator:
 
         if self._use_remote_mappers:
             self._graphs = [ray.get(f) for f in graph_futures]
+
+            if return_costmaps:
+                costmap_fs = [
+                    self._mappers[i].get_latest_frame_costmap.remote(goal_descriptor)
+                    for i, goal_descriptor in enumerate(goal_descriptors)
+                ]
+                return ray.get(costmap_fs)
         else:
             self._graphs = graph_futures
             for graph in self._graphs:
@@ -1300,18 +1345,19 @@ class PredictedCostmapImageGenerator:
         self._use_remote_mappers = use_remote_mappers
 
         self._descriptor_generator = ClipDescriptorGenerator()
-        self._cost_predictor, train_config = load_checkpoint(model_path)
-        self._cost_predictor.eval()
 
-        self._goal_attributes = train_config.dataset.goal_attributes
-        self._node_attributes = train_config.dataset.node_attributes
+        # _, train_config = load_checkpoint(model_path)
+        # self._cost_predictor, train_config = load_checkpoint(model_path)
+        # self._cost_predictor.eval()
+
+        # self._goal_attributes = train_config.dataset.goal_attributes
+        # self._node_attributes = train_config.dataset.node_attributes
 
         # TODO: Support different graph generators
         self._graph_generator = GroundTruthPerceptionGraphGenerator(
             num_envs,
             use_remote_mappers=use_remote_mappers,
-            cost_predictor=self._cost_predictor,
-            node_attributes=self._node_attributes,
+            cost_predictor_checkpoint_path=model_path,
             **kwargs,
         )
 
