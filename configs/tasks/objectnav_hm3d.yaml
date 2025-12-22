@@ -120,6 +120,7 @@ REPRESENTATION_GENERATOR:
     # ground_truth_costmap:
     #   resize_and_crop_to: 128
     ground_truth_perception_graph:
+      filter_sim_labels: ["ceiling", "floor", "wall", "unlabeled"]
       max_descriptor_update_image_frac: 0.3
       use_sam21: False
       image_width: 640
@@ -133,7 +134,7 @@ REPRESENTATION_GENERATOR:
       use_segmaster_matcher: False
       segmaster_config_path: /home/dc/sg_new/segmast3r/configs/config_eval_spp_resz.yaml
       segmaster_checkpoint_path: /home/dc/sg_new/segmast3r/checkpoints/segmast3r_spp.ckpt
-      # vis_dir: temp/rollout_vis/30_eps/splg_k6_merge_matched_nodes
+      # vis_dir: temp/rollout_vis/30_eps/splg_k6_filter_labels
       vis_dir: null
       use_gt_depth: False
       use_gt_segments: False

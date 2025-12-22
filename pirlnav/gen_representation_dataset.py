@@ -139,14 +139,14 @@ class CustomEnv(SimpleRLEnv):
     custom env patches that in. Implementation is based on ImageExtractor.
     """
 
-    def get_semantic_instance_id_to_name_map(self):
+    def get_semantic_instance_id_to_label_map(self):
         semantic_scene = self._env._sim.semantic_scene
 
         instance_id_to_name = {}
         for obj in semantic_scene.objects:
             if obj and obj.category:
                 obj_id = int(obj.id.split("_")[-1])
-                instance_id_to_name[obj_id] = (obj.category.name(), obj.aabb.center)
+                instance_id_to_name[obj_id] = obj.category.name()
 
         return instance_id_to_name
 
@@ -805,7 +805,8 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         super().__init__(resize_and_crop_to=resize_and_crop_to, **kwargs)
         self.data_names = ["goal_costmap", "gt_costmap"]
 
-        self._scene_instance_map = {}
+        self._instance_id_to_label_map = {}
+        self._instance_id_to_object_center_map = {}
         self._shortest_path_maps = {}
 
         self._running_max_costs = [0.0] * num_envs
@@ -845,23 +846,27 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         scene = episode.scene_id.split("/")[-1]
         goal = episode.object_category
 
-        if scene not in self._scene_instance_map:
-            self._scene_instance_map[scene] = build_semantic_instance_to_id_map(
-                envs, env_idx
+        if scene not in self._instance_id_to_label_map:
+            self._instance_id_to_label_map[scene] = (
+                build_semantic_instance_id_to_label_map(envs, env_idx)
+            )
+            self._instance_id_to_object_center_map[scene] = envs.call_at(
+                env_idx, "get_object_centers"
             )
 
-        instance_to_label_pos = self._scene_instance_map[scene]
+        instance_to_label = self._instance_id_to_label_map[scene]
+        instance_to_pos = self._instance_id_to_object_center_map[scene]
         sem_img_height, sem_img_width = obs["semantic"].shape[:2]
 
         goal_mask_img = np.zeros((sem_img_height, sem_img_width, 1), dtype=bool)
-        for instance_id, (label, dist) in instance_to_label_pos.items():
+        for instance_id, label in instance_to_label.items():
             if label == goal:
                 mask = obs["semantic"] == instance_id
                 goal_mask_img[mask] = True
 
         if (scene, goal) not in self._shortest_path_maps:
             self._shortest_path_maps[(scene, goal)] = self._get_shortest_path_map(
-                instance_to_label_pos, goal, envs, env_idx
+                instance_to_label, instance_to_pos, goal, envs, env_idx
             )
 
         gt_costmap = self._get_geodesic_distance_costmap(
@@ -871,20 +876,29 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
         return goal_mask_img, gt_costmap
 
     def _get_shortest_path_map(
-        self, instance_to_label_pos, goal, envs, env_idx, use_log_costs=True
+        self,
+        instance_to_label,
+        instance_to_pos,
+        goal,
+        envs,
+        env_idx,
+        use_log_costs=True,
     ):
         goal_positions = [
-            pos for label, pos in instance_to_label_pos.values() if goal in label
+            pos
+            for instance_id, pos in instance_to_pos.items()
+            if goal in instance_to_label[instance_id]
         ]
         if not goal_positions:
             with open("missing_goal.txt", "a") as f:
                 f.write(
-                    f"No goal positions found for {goal} in scene {envs.current_episodes()[env_idx].scene_id}\n"
+                    f"No goal positions found for {goal} in scene "
+                    f"{envs.current_episodes()[env_idx].scene_id}\n"
                 )
                 f.write(
-                    f"Labels: {list(label for label, cost in instance_to_label_pos.values())}"
+                    f"Labels: {list(label for label in instance_to_label.values())}"
                 )
-            return {instance: 1.0 for instance in instance_to_label_pos}
+            return {instance: 1.0 for instance in instance_to_label}
 
         instance_to_cost = {
             instance_id: (
@@ -893,10 +907,10 @@ class GroundTruthCostmapImageGenerator(RawImageGenerator):
                     "geodesic_distance",
                     {"position_a": pos, "position_b": goal_positions},
                 )
-                if goal not in label
+                if goal not in instance_to_label[instance_id]
                 else 0.0
             )
-            for instance_id, (label, pos) in instance_to_label_pos.items()
+            for instance_id, pos in instance_to_pos.items()
         }
 
         if use_log_costs:
@@ -960,6 +974,7 @@ class GroundTruthPerceptionGraphGenerator:
         self,
         num_envs,
         max_descriptor_update_image_frac,
+        filter_sim_labels=None,
         image_width=None,
         image_height=None,
         hfov=None,
@@ -1103,6 +1118,8 @@ class GroundTruthPerceptionGraphGenerator:
                         depth_worker, image_width, image_height, hfov=hfov
                     )
 
+                vis_dir = f"{vis_dir}/env_{i}" if vis_dir is not None else None
+
                 mapper = RemoteIncrementalMapper.remote(
                     segmentor=segmentor,
                     matcher=matcher,
@@ -1111,7 +1128,7 @@ class GroundTruthPerceptionGraphGenerator:
                     min_segment_area=50,
                     max_descriptor_update_image_frac=0.3,
                     matching_window_size=matching_window_size,
-                    save_vis_dir=f"{vis_dir}/env_{i}",
+                    save_vis_dir=vis_dir,
                     add_matching_sim_segments=False,
                     use_gt_depth=use_gt_depth,
                     use_gt_segments=use_gt_segments,
@@ -1121,12 +1138,14 @@ class GroundTruthPerceptionGraphGenerator:
                     loop_closure_exclusion_window=loop_closure_exclusion_window,
                     loop_closure_top_k=loop_closure_top_k,
                     loop_closure_required_match_count=loop_closure_required_match_count,
+                    goal_labels=OBJECTNAV_GOALS,
+                    filter_sim_labels=filter_sim_labels,
                 )
                 self._mappers.append(mapper)
 
         self._env_idx_to_scene = {}
         self._scene_object_centers = {}
-        self._scene_instance_id_to_label_dist_cache = {}
+        self._scene_instance_id_to_label_cache = {}
 
         # self._label_remap_func = load_object_label_remapping_func()
 
@@ -1153,8 +1172,8 @@ class GroundTruthPerceptionGraphGenerator:
                 self._scene_object_centers[scene] = envs.call_at(
                     i, "get_object_centers"
                 )
-                self._scene_instance_id_to_label_dist_cache[scene] = (
-                    build_semantic_instance_to_id_map(envs, i)
+                self._scene_instance_id_to_label_cache[scene] = (
+                    build_semantic_instance_id_to_label_map(envs, i)
                 )
 
         for i, done in enumerate(dones):
@@ -1162,10 +1181,19 @@ class GroundTruthPerceptionGraphGenerator:
                 # Done is true on the first step of a new episode.
                 if self._use_remote_mappers:
                     scene = self._env_idx_to_scene[i]
+                    episode_id = ep_metadata[i].episode_id
+                    goal = ep_metadata[i].object_category
                     object_centers = self._scene_object_centers[scene]
-                    ep_id = f"{scene}_{ep_metadata[i].episode_id}_{ep_metadata[i].object_category}"
+                    instance_id_to_label = (
+                        self._scene_instance_id_to_label_cache[scene]
+                    )
+
                     self._mappers[i].reset.remote(
-                        info={"object_centers": object_centers, "ep_id": ep_id}
+                        info={
+                            "ep_id": f"{scene}_{episode_id}_{goal}",
+                            "object_centers": object_centers,
+                            "instance_id_to_label": instance_id_to_label,
+                        }
                     )
                     self._graphs[i] = nx.Graph()
                 else:
@@ -1195,10 +1223,10 @@ class GroundTruthPerceptionGraphGenerator:
             self._graphs = [ray.get(f) for f in graph_futures]
         else:
             self._graphs = graph_futures
-            for graph in self._graphs:
-                self._add_instance_labels(
-                    graph, self._scene_instance_id_to_label_dist_cache[scene]
-                )
+            # for graph in self._graphs:
+            #     self._add_instance_labels(
+            #         graph, self._scene_instance_id_to_label_cache[scene]
+            #     )
 
         return {"gt_perception_graph": self._graphs}
 
@@ -1224,11 +1252,11 @@ class GroundTruthPerceptionGraphGenerator:
 
         graph = self._mappers[env_idx].get_graph.remote()
         graph = ray.get(graph)
-        scene = self._env_idx_to_scene[env_idx]
+        # scene = self._env_idx_to_scene[env_idx]
 
-        self._add_instance_labels(
-            graph, self._scene_instance_id_to_label_dist_cache[scene]
-        )
+        # self._add_instance_labels(
+        #     graph, self._scene_instance_id_to_label_cache[scene]
+        # )
 
         return {"gt_perception_graph": graph}
 
@@ -1259,14 +1287,14 @@ class GroundTruthPerceptionGraphGenerator:
         else:
             return mapper.update(graph, object_centers, rgb, semantic, None)
 
-    def _add_instance_labels(self, graph, instance_id_to_label_dist):
+    def _add_instance_labels(self, graph, instance_id_to_label):
         unlabelled_nodes = [
             (n, attr) for n, attr in graph.nodes(data=True) if "label" not in attr
         ]
 
         label_lists = [
             [
-                instance_id_to_label_dist.get(l, ["unknown"])[0]
+                instance_id_to_label.get(l, ["unknown"])[0]
                 for l in attr["sim_instance_ids"]
             ]
             for n, attr in unlabelled_nodes
@@ -2076,9 +2104,9 @@ def convert_rotation_to_small_movement(
     return prev_output_pos + movement
 
 
-def build_semantic_instance_to_id_map(envs, env_idx):
-    instance_id_to_label_dist = envs.call_at(
-        env_idx, "get_semantic_instance_id_to_name_map"
+def build_semantic_instance_id_to_label_map(envs, env_idx):
+    instance_id_to_label = envs.call_at(
+        env_idx, "get_semantic_instance_id_to_label_map"
     )
 
     # The target object categories sometimes have additional text (e.g. "armchair"),
@@ -2088,11 +2116,11 @@ def build_semantic_instance_to_id_map(envs, env_idx):
     # false positives here (e.g. "tv cabinet"):
     remap_label_func = load_object_label_remapping_func()
 
-    for instance_id, (orig_label, cost) in instance_id_to_label_dist.items():
+    for instance_id, orig_label in instance_id_to_label.items():
         canonical_label = remap_label_func(orig_label)
-        instance_id_to_label_dist[instance_id] = (canonical_label, cost)
+        instance_id_to_label[instance_id] = canonical_label
 
-    return instance_id_to_label_dist
+    return instance_id_to_label
 
 
 def load_object_label_remapping_func():
