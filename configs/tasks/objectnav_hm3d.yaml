@@ -86,6 +86,7 @@ DATASET:
   #   # 1S7LAXRdDqK,
   #   vLpv2VX547B
   # ]
+  # Cost predictor split seed0 held-out scenes:
   # CONTENT_SCENES: [
   #   iKFn6fzyRqs,
   #   QN2dRqwd84J,
@@ -109,6 +110,7 @@ REPRESENTATION_GENERATOR:
   skip_look_actions: False
   generate_skip_index: False
   max_num_eps: null
+  split_across_gpus: True
   data_generators:
     # raw_image:
     #   resize_and_crop_to: 256
@@ -139,8 +141,8 @@ REPRESENTATION_GENERATOR:
       use_segmaster_matcher: False
       segmaster_config_path: /home/dc/sg_new/segmast3r/configs/config_eval_spp_resz.yaml
       segmaster_checkpoint_path: /home/dc/sg_new/segmast3r/checkpoints/segmast3r_spp.ckpt
-      vis_dir: temp/rollout_vis/30_eps/splg_costmap_test_2
-      # vis_dir: null
+      # vis_dir: temp/rollout_vis/costmaps_held_out_scenes/splg_costmap_test_2
+      vis_dir: null
       use_gt_depth: False
       use_gt_segments: False
       use_segmaster_geometry: False

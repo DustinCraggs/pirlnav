@@ -121,6 +121,7 @@ def construct_envs(
     shuffle_scenes: bool = True,
     episode_index=None,
     load_all_scenes: bool = False,
+    split_across_gpu_ids: list = None,
 ) -> VectorEnv:
     r"""Create VectorEnv object with specified config and env class type.
     To allow better performance, dataset are split into small ones for
@@ -189,7 +190,11 @@ def construct_envs(
         if len(scenes) > 0:
             task_config.DATASET.CONTENT_SCENES = scene_splits[i]
 
-        task_config.SIMULATOR.HABITAT_SIM_V0.GPU_DEVICE_ID = config.SIMULATOR_GPU_ID
+        if split_across_gpu_ids is not None:
+            gpu_id = split_across_gpu_ids[i % len(split_across_gpu_ids)]
+            task_config.SIMULATOR.HABITAT_SIM_V0.GPU_DEVICE_ID = gpu_id
+        else:
+            task_config.SIMULATOR.HABITAT_SIM_V0.GPU_DEVICE_ID = config.SIMULATOR_GPU_ID
 
         task_config.SIMULATOR.AGENT_0.SENSORS = config.SENSORS
 

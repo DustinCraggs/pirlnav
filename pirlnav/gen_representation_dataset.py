@@ -327,19 +327,26 @@ class ZarrDataStorage:
     def _init_zarr_file(self, data):
         # Don't overwrite existing, as there may have been a partially completed run:
         self._zarr_file = zarr.open(self._output_path, mode="a")
-        self._data_group = self._zarr_file.create_group("data", overwrite=False)
+        self._data_group = self._zarr_file.require_group("data")
         # In older versions of zarr, "meta*" names are reserved, so prefix with "_":
-        self._meta_group = self._zarr_file.create_group("_meta", overwrite=False)
+        self._meta_group = self._zarr_file.require_group("_meta")
 
         for key, data_array in data.items():
             chunks = [None] * len(data_array.shape)
             chunks[0] = self._batch_chunk_size
 
-            self._data_group[key] = zarr.create(
+            # self._data_group[key] = zarr.create(
+            #     shape=(self._total_length, *data_array.shape[1:]),
+            #     dtype=data_array.dtype,
+            #     chunks=chunks,
+            #     overwrite=False,
+            # )
+
+            self._data_group.require_dataset(
+                key,
                 shape=(self._total_length, *data_array.shape[1:]),
                 dtype=data_array.dtype,
                 chunks=chunks,
-                overwrite=False,
             )
 
     def save_episode(self, data, scene_id, episode_id, object_category):
@@ -519,9 +526,7 @@ class RepresentationGenerator:
         if rep_gen_config["data_storage"]["name"] == "graph":
             self._store_last_data_only = True
 
-        self._skip_non_movement_actions = config["TASK_CONFIG"][
-            "REPRESENTATION_GENERATOR"
-        ]["skip_non_movement_actions"]
+        self._skip_non_movement_actions = rep_gen_config["skip_non_movement_actions"]
 
         self._skip_look_actions = rep_gen_config["skip_look_actions"]
 
@@ -570,6 +575,21 @@ class RepresentationGenerator:
         episodes = [{k: ep[k] for k in ep_keys} for ep in sub_split_index]
         all_episodes = [{k: ep[k] for k in ep_keys} for ep in full_sub_split_index]
 
+        split_across_gpus = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"][
+            "split_across_gpus"
+        ]
+
+        print(f"{split_across_gpus=}")
+        print(f"{os.environ.get('CUDA_VISIBLE_DEVICES', '0')=}")
+
+        # Get available GPU IDs:
+        if split_across_gpus:
+            split_across_gpu_ids = list(
+                range(len(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")))
+            )
+        else:
+            split_across_gpu_ids = None
+        print(f"{split_across_gpu_ids=}")
         # env_cls = get_env_class(config["ENV_NAME"])
         envs = construct_envs(
             config,
@@ -577,6 +597,7 @@ class RepresentationGenerator:
             workers_ignore_signals=False,
             shuffle_scenes=False,
             episode_index=sub_split_index,
+            split_across_gpu_ids=split_across_gpu_ids,
         )
 
         return envs, episodes, all_episodes
@@ -1037,8 +1058,8 @@ class GroundTruthPerceptionGraphGenerator:
                     }
                 },
                 include_dashboard=False,
-                log_to_driver=False,
-                logging_level=logging.WARNING,
+                # log_to_driver=False,
+                # logging_level=logging.WARNING,
                 dashboard_host="0.0.0.0",
             )
 
@@ -1073,8 +1094,8 @@ class GroundTruthPerceptionGraphGenerator:
             ray.init(
                 runtime_env={"env_vars": {"PYTHONPATH": path}},
                 include_dashboard=False,
-                log_to_driver=False,
-                logging_level=logging.WARNING,
+                # log_to_driver=False,
+                # logging_level=logging.WARNING,
                 dashboard_host="0.0.0.0",
             )
 
@@ -1094,9 +1115,6 @@ class GroundTruthPerceptionGraphGenerator:
                 f"{sg_hab_path}/model_weights/depth_anything_metric_depth_indoor.pt"
             )
 
-            if not use_segmaster_geometry:
-                depth_worker = get_depth_worker(depth_model_name, depth_model_path)
-
             # Create this deployment last, as it is the heaviest and will reserve all
             # of GPU0:
             if use_segmaster_matcher:
@@ -1107,6 +1125,9 @@ class GroundTruthPerceptionGraphGenerator:
                 )
             else:
                 splg_worker = get_splg_matcher_deployment()
+
+            if not use_segmaster_geometry:
+                depth_worker = get_depth_worker(depth_model_name, depth_model_path)
 
             self._mappers = []
 
