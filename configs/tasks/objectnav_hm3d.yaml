@@ -125,6 +125,7 @@ REPRESENTATION_GENERATOR:
       edge_weight_name: "e3d"
       resize_and_crop_to: 128
     # ground_truth_perception_graph:
+      filter_sim_labels: ["ceiling", "floor", "wall", "unlabeled"]
       max_descriptor_update_image_frac: 0.3
       use_sam21: False
       image_width: 640
