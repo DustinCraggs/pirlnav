@@ -16,6 +16,9 @@ class ZarrDataset(IterableDataset):
     for zarr."""
 
     def __init__(self, zarr_array_dict, start=None, end=None, auto_reset=True):
+        if start is not None and end is not None and start >= end:
+            raise ValueError(f"Invalid index range: start ({start}) >= end ({end}).")
+
         self._zarr_array_dict = zarr_array_dict
         total_length = zarr_array_dict[next(iter(zarr_array_dict))].shape[0]
         self._start = start or 0

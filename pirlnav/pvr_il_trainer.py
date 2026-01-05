@@ -185,7 +185,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         ]
 
         example_batch = next(iter(pvr_dataloaders[0]))
-        pvr_shapes = {k: example_batch[k].shape for k in pvr_config.pvr_keys}
+
+        visual_keys = [*pvr_config.pvr_keys, "rgb"]
+        pvr_shapes = {k: example_batch[k].shape for k in visual_keys}
+        # pvr_shapes = {k: example_batch[k].shape for k in pvr_config.pvr_keys}
         # pvr_shapes = {k: (256, 256) for k in pvr_config.pvr_keys}
 
         nv_dataset = zarr.open(pvr_config.non_visual_obs_data_path, mode="r")
