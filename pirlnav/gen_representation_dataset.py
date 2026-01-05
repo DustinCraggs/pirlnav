@@ -385,6 +385,7 @@ class ZarrDataStorage:
         ep_index_path = f"{self._output_path}/ep_index.json"
         json.dump(self._completed_eps, open(ep_index_path, "w"))
 
+        scene_id = scene_id.split("/")[-2]
         ep_id = f"{scene_id}_{episode_id}_{object_category}"
         completed_eps_path = f"{self._output_path}/completed_eps.txt"
         with open(completed_eps_path, "a") as f:
@@ -564,7 +565,8 @@ class RepresentationGenerator:
                 ep
                 for ep in sub_split_index
                 if (
-                    ep["scene_id"].split("/")[-2],
+                    # ep["scene_id"].split("/")[-2],
+                    ep["scene_id"],
                     ep["episode_id"],
                     ep["object_category"],
                 )
@@ -579,9 +581,6 @@ class RepresentationGenerator:
             "split_across_gpus"
         ]
 
-        print(f"{split_across_gpus=}")
-        print(f"{os.environ.get('CUDA_VISIBLE_DEVICES', '0')=}")
-
         # Get available GPU IDs:
         if split_across_gpus:
             split_across_gpu_ids = list(
@@ -589,7 +588,7 @@ class RepresentationGenerator:
             )
         else:
             split_across_gpu_ids = None
-        print(f"{split_across_gpu_ids=}")
+
         # env_cls = get_env_class(config["ENV_NAME"])
         envs = construct_envs(
             config,
@@ -1032,6 +1031,7 @@ class GroundTruthPerceptionGraphGenerator:
         loop_closure_exclusion_window=15,
         loop_closure_top_k=3,
         loop_closure_required_match_count=3,
+        use_observed_node_data=False,
         **kwargs,
     ):
         self.data_names = ["gt_perception_graph"]
@@ -1199,6 +1199,7 @@ class GroundTruthPerceptionGraphGenerator:
                     loop_closure_required_match_count=loop_closure_required_match_count,
                     goal_labels=OBJECTNAV_GOALS,
                     filter_sim_labels=filter_sim_labels,
+                    use_observed_node_data=use_observed_node_data,
                 )
                 self._mappers.append(mapper)
 

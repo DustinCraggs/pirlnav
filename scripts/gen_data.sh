@@ -20,6 +20,7 @@ python run.py \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_storage.output_path $output_dir \
     TASK_CONFIG.REPRESENTATION_GENERATOR.skip_look_actions False \
     TASK_CONFIG.REPRESENTATION_GENERATOR.generate_skip_index False \
+    # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /storage/dc/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0/pred_costmaps/splg_full_costmaps_1_2/completed_eps.txt \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/full/splg_2_filter_labels/ep_index.txt \
     # TASK_CONFIG.SIMULATOR.ACTION_SPACE_CONFIG "v1_no_op_look" \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/test/ep_index.txt \
