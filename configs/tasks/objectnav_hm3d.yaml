@@ -110,7 +110,7 @@ REPRESENTATION_GENERATOR:
   skip_look_actions: False
   generate_skip_index: False
   max_num_eps: null
-  split_across_gpus: True
+  split_across_gpus: False
   data_generators:
     # raw_image:
     #   resize_and_crop_to: 256
@@ -122,8 +122,7 @@ REPRESENTATION_GENERATOR:
     # ground_truth_costmap:
     #   resize_and_crop_to: 128
     predicted_costmap:
-      model_path: "/storage/dc/nav_datasets/cost_predictor/splg_maps_full_1_20251219_140035/epoch_999.pth"
-      # model_path: "/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_199.pth"
+      model_path: "/home/dc/data/nav_experiments/cost_predictor/segmaster_1_1_20260102_165219/epoch_149.pth"
       edge_weight_name: "e3d"
       resize_and_crop_to: 128
     # ground_truth_perception_graph:
@@ -136,21 +135,21 @@ REPRESENTATION_GENERATOR:
       segmentor_model_path: /home/dc/sg_new/sg_habitat/libs/models/FastSAM-s.pt
       use_remote_mappers: True
       use_inf_mapping: True
-      matching_window_size: 6
+      matching_window_size: 3
       num_kp_threshold: 1
-      use_segmaster_matcher: False
+      use_segmaster_matcher: True
       segmaster_config_path: /home/dc/sg_new/segmast3r/configs/config_eval_spp_resz.yaml
       segmaster_checkpoint_path: /home/dc/sg_new/segmast3r/checkpoints/segmast3r_spp.ckpt
-      # vis_dir: temp/rollout_vis/costmaps_held_out_scenes/splg_costmap_test_2
+      # vis_dir: temp/rollout_vis/30_eps/segmaster_test_final_no_lc_2
       vis_dir: null
       use_gt_depth: False
       use_gt_segments: False
-      use_segmaster_geometry: False
+      use_segmaster_geometry: True
       remove_mask_edges: False
-      use_loop_closure: True
+      use_loop_closure: False
       loop_closure_exclusion_window: 16
-      loop_closure_top_k: 4
-      loop_closure_required_match_count: 8
+      loop_closure_top_k: 2
+      loop_closure_required_match_count: 6
 
     # costmap_visualisation:
     #   model_path: "/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_999.pth"
