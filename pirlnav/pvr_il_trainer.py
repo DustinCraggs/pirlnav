@@ -158,12 +158,17 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
     def _init_demonstration_dataset(self):
         pvr_config = self.config.TASK_CONFIG.PVR
+        
+        pvr_keys = pvr_config.pvr_keys
+
+        if pvr_config.pvr_key is not None:
+            pvr_keys.append(pvr_config.pvr_key)
 
         pvr_datasets = create_pvr_dataset_splits(
             pvr_config.pvr_data_path,
             pvr_config.non_visual_obs_data_path,
             num_splits=self.config.NUM_ENVIRONMENTS,
-            pvr_keys=pvr_config.pvr_keys,
+            pvr_keys=pvr_keys,
             nv_keys=pvr_config.non_visual_keys,
             use_dataset_frac=pvr_config.use_dataset_frac,
         )
@@ -221,6 +226,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         # TODO: The observations from the dataset are already batched, but would using
         # the cache still meaningfully impact performance?
         obs_keys = self.config.TASK_CONFIG.PVR.obs_keys
+
+        if self.config.TASK_CONFIG.PVR.pvr_key is not None:
+            obs_keys.append(self.config.TASK_CONFIG.PVR.pvr_key)
+
         observations = {k: v.to(self.device) for k, v in batch.items() if k in obs_keys}
         actions = batch["next_actions"].to(self.device)
         rewards = batch["reward"].to(self.device)
@@ -347,7 +356,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         # insertion:
         self._first_step = True
 
-        resume_state = load_resume_state(self.config)
+        resume_state = None
+        if self.config.RESUME_RUN:
+            resume_state = load_resume_state(self.config)
+
         if resume_state is not None:
             self.config: Config = resume_state["config"]
 
@@ -532,7 +544,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         Returns:
             None
         """
-
         self._init_train()
 
         count_checkpoints = 0
@@ -882,6 +893,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         # Make representation generator:
         pvr_keys = self.config.TASK_CONFIG.PVR.pvr_keys
+
+        if self.config.TASK_CONFIG.PVR.pvr_key is not None:
+            pvr_keys.append(self.config.TASK_CONFIG.PVR.pvr_key)
 
         if pvr_keys:
             data_generator = get_data_generators(

@@ -19,6 +19,7 @@ NUM_CHECKPOINTS: 10
 # Force PyTorch to be single threaded as
 # this improves performance considerably
 FORCE_TORCH_SINGLE_THREADED: True
+RESUME_RUN: False
 
 EVAL:
   SPLIT: "val"
@@ -40,8 +41,9 @@ POLICY:
   CRITIC:
     no_critic: True
   RGB_ENCODER:
-    # costmap_names: []
-    costmap_names: ["predicted_costmap"]
+    costmap_channels: 0
+    costmap_names: []
+    # costmap_names: ["predicted_costmap"]
     # costmap_names: ["gt_costmap"]
     # costmap_names: ["goal_costmap"]
 
