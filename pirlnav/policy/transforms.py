@@ -31,7 +31,23 @@ class RandomShiftsAug(nn.Module):
         shift *= 2.0 / (h + 2 * self.pad)
 
         grid = base_grid + shift
-        return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
+        # return F.grid_sample(x, grid, padding_mode="zeros", align_corners=False)
+
+        if x.shape[1] > 3:
+            rgb = x[:, :3]
+            cost = x[:, 3:]
+
+            rgb_shifted = F.grid_sample(
+                rgb, grid, mode="bilinear", padding_mode="zeros", align_corners=False
+            )
+            cost_shifted = F.grid_sample(
+                cost, grid, mode="nearest", padding_mode="zeros", align_corners=False
+            )
+            return torch.cat([rgb_shifted, cost_shifted], dim=1)
+        else:
+            return F.grid_sample(
+                x, grid, mode="bilinear", padding_mode="zeros", align_corners=False
+            )
 
 
 class Transform:
@@ -77,7 +93,7 @@ class ResizeTransform(Transform):
 
     def apply(self, x):
         x = x.permute(0, 3, 1, 2)
-        x = TF.resize(x, self.size)
+        x = resize_rgb_costmap(x, self.size)
         x = TF.center_crop(x, output_size=self.size)
         x = x.float() / 255.0
         return x
@@ -90,7 +106,7 @@ class ShiftAndJitterTransform(Transform):
 
     def apply(self, x):
         x = x.permute(0, 3, 1, 2)
-        x = TF.resize(x, self.size)
+        x = resize_rgb_costmap(x, self.size)
         x = TF.center_crop(x, output_size=self.size)
         x = x.float() / 255.0
         if "jitter" in self.augmentations_name:
@@ -100,6 +116,7 @@ class ShiftAndJitterTransform(Transform):
             x = RandomShiftsAug(16)(x)
         return x
 
+
 def get_transform(name, size):
     if name == "resize":
         return ResizeTransform(size)
@@ -107,3 +124,19 @@ def get_transform(name, size):
         return ShiftAndJitterTransform(name, size)
     else:
         raise ValueError(f"Unknown transform {name}")
+
+
+def resize_rgb_costmap(x, size):
+    rgb = x[:, :3]
+
+    if x.shape[1] > 3:
+        rgb = x[:, :3]
+        cost = x[:, 3:]
+
+        rgb = TF.resize(rgb, size, interpolation=TF.InterpolationMode.BILINEAR)
+        cost = TF.resize(cost, size, interpolation=TF.InterpolationMode.NEAREST_EXACT)
+        x = torch.cat([rgb, cost], dim=1)
+    else:
+        x = TF.resize(x, size, interpolation=TF.InterpolationMode.BILINEAR)
+
+    return x

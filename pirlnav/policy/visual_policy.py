@@ -53,8 +53,10 @@ class ObjectNavILMAENet(Net):
         name = "resize"
         if rgb_config.use_augmentations and run_type == "train":
             name = rgb_config.augmentations_name
+
         if rgb_config.use_augmentations_test_time and run_type == "eval":
             name = rgb_config.augmentations_name
+
         self.visual_transform = get_transform(name, size=rgb_config.image_size)
         self.visual_transform.randomize_environments = (
             rgb_config.randomize_augmentations_over_envs
@@ -115,12 +117,17 @@ class ObjectNavILMAENet(Net):
             rnn_input_size += pvr_token_dim
         else:
             self._costmap_names = rgb_config.get("costmap_names", [])
+            self._costmap_channels = rgb_config.get("costmap_channels", 0)
 
             if self._costmap_names:
 
                 def _costmap_transform(img):
                     img = img.permute(0, 3, 1, 2)
-                    img = TF.resize(img, rgb_config.image_size)
+                    TF.resize(
+                        img,
+                        rgb_config.image_size,
+                        interpolation=TF.InterpolationMode.NEAREST_EXACT,
+                    )
                     img = TF.center_crop(img, output_size=rgb_config.image_size)
                     return img.permute(0, 2, 3, 1)
 
@@ -130,6 +137,7 @@ class ObjectNavILMAENet(Net):
                 image_size=rgb_config.image_size,
                 backbone=rgb_config.backbone,
                 input_channels=rgb_config.input_channels,
+                costmap_channels=self._costmap_channels,
                 resnet_baseplanes=rgb_config.resnet_baseplanes,
                 resnet_ngroups=rgb_config.resnet_baseplanes // 2,
                 avgpooled_image=rgb_config.avgpooled_image,
@@ -161,6 +169,8 @@ class ObjectNavILMAENet(Net):
             if rgb_config.freeze_backbone:
                 for p in self.visual_encoder.backbone.parameters():
                     p.requires_grad = False
+
+            self.visual_encoder.set_up_costmap_stem()
 
         self.rnn_input_size = rnn_input_size
 
@@ -280,14 +290,14 @@ class ObjectNavILMAENet(Net):
         elif self.visual_encoder is not None:
             rgb_obs = observations["rgb"]
 
-            if self._costmap_names:
-                # Pre-resize the RGB observation to match costmap size:
-                rgb_obs = self._costmap_resize(rgb_obs)
+            # if self._costmap_names:
+            #     # Pre-resize the RGB observation to match costmap size:
+            #     rgb_obs = self._costmap_resize(rgb_obs)
 
             # Channel-wise stack rgb and costmaps. This needs to occur before visual
             # transforms in order to apply the same augmentations:
             for costmap_name in self._costmap_names:
-                orig_shape = observations[costmap_name].shape
+                # orig_shape = observations[costmap_name].shape
                 costmap = self._costmap_resize(observations[costmap_name])
 
                 # if costmap_name == "goal_costmap":
