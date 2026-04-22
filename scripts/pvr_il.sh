@@ -55,7 +55,7 @@ python -u -m torch.distributed.run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 4 \
+    POLICY.RGB_ENCODER.input_channels 3 \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \

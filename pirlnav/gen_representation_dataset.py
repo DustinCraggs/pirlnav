@@ -96,7 +96,7 @@ def generate_episode_split_index(config):
     generate_dataset_split_json(config, output_path, stride, start_idx)
 
 
-def get_data_generators(config, num_envs):
+def get_data_generators(config, num_envs, seed=None):
     data_generator_registry = {
         "non_visual": NonVisualObservationsGenerator,
         "raw_image": RawImageGenerator,
@@ -114,7 +114,7 @@ def get_data_generators(config, num_envs):
 
     return [
         data_generator_registry[name](
-            num_envs=num_envs, **args if args is not None else {}
+            num_envs=num_envs, seed=seed, **args if args is not None else {}
         )
         for name, args in generator_config["data_generators"].items()
     ]
@@ -1032,6 +1032,8 @@ class GroundTruthPerceptionGraphGenerator:
         loop_closure_top_k=3,
         loop_closure_required_match_count=3,
         use_observed_node_data=False,
+        seed=None,
+        cf_goals=None,
         **kwargs,
     ):
         self.data_names = ["gt_perception_graph"]
@@ -1042,6 +1044,13 @@ class GroundTruthPerceptionGraphGenerator:
             max_descriptor_update_image_frac=max_descriptor_update_image_frac,
             descriptor_generator=self._descriptor_generator,
         )
+
+        self._cf_goal_descriptors = None
+        if cf_goals is not None:
+            descriptors = self._descriptor_generator.get_text_descriptors(cf_goals)
+            self._cf_goal_descriptors = {
+                goal: descriptor for goal, descriptor in zip(cf_goals, descriptors)
+            }
 
         self._mappers = [None for _ in range(num_envs)]
         self._graphs = [None for _ in range(num_envs)]
@@ -1107,8 +1116,9 @@ class GroundTruthPerceptionGraphGenerator:
                 image_height,
                 conf=0.5,
                 use_sam21=use_sam21,
+                seed=seed,
             )
-            clip_worker = get_clip_worker()
+            clip_worker = get_clip_worker(seed=seed)
 
             depth_model_name = "zoedepth"
             depth_model_path = (
@@ -1122,18 +1132,21 @@ class GroundTruthPerceptionGraphGenerator:
                     segmaster_config_path,
                     segmaster_checkpoint_path,
                     get_geometry=use_segmaster_geometry,
+                    seed=seed,
                 )
             else:
-                splg_worker = get_splg_matcher_deployment()
+                splg_worker = get_splg_matcher_deployment(seed=seed)
 
             if not use_segmaster_geometry:
-                depth_worker = get_depth_worker(depth_model_name, depth_model_path)
+                depth_worker = get_depth_worker(
+                    depth_model_name, depth_model_path, seed=seed
+                )
 
             self._mappers = []
 
             if cost_predictor_checkpoint_path:
                 cost_predictor_worker = get_cost_predictor_worker(
-                    cost_predictor_checkpoint_path
+                    cost_predictor_checkpoint_path, seed=seed
                 )
 
             for i in range(num_envs):
@@ -1199,7 +1212,9 @@ class GroundTruthPerceptionGraphGenerator:
                     loop_closure_required_match_count=loop_closure_required_match_count,
                     goal_labels=OBJECTNAV_GOALS,
                     filter_sim_labels=filter_sim_labels,
-                    use_observed_node_data=use_observed_node_data,
+                    seed=seed,
+                    cf_goal_descriptors=self._cf_goal_descriptors,
+                    # use_observed_node_data=use_observed_node_data,
                 )
                 self._mappers.append(mapper)
 
@@ -1207,6 +1222,7 @@ class GroundTruthPerceptionGraphGenerator:
         self._scene_object_centers = {}
         self._scene_instance_id_to_label_cache = {}
 
+        self._c = 0
         # self._label_remap_func = load_object_label_remapping_func()
 
     def generate(
@@ -1221,7 +1237,9 @@ class GroundTruthPerceptionGraphGenerator:
         skipped_last,
         return_costmaps=False,
         goal_descriptors=None,
+        skip_env_idxs=None,
     ):
+        skip_env_idxs = skip_env_idxs or []
         # t0_gen = time.perf_counter()
 
         # Update scene instances:
@@ -1236,7 +1254,10 @@ class GroundTruthPerceptionGraphGenerator:
                     build_semantic_instance_id_to_label_map(envs, i)
                 )
 
+        self._c += 1
+
         for i, done in enumerate(dones):
+            # if done or self._c % 15 == 0:
             if done:
                 # Done is true on the first step of a new episode.
                 if self._use_remote_mappers:
@@ -1267,6 +1288,9 @@ class GroundTruthPerceptionGraphGenerator:
         for i, (graph, mapper, obs) in enumerate(
             zip(self._graphs, self._mappers, observations)
         ):
+            if i in skip_env_idxs:
+                graph_futures.append(graph)
+                continue
             graph_future = self._get_updated_graph(
                 graph,
                 mapper,
@@ -1278,7 +1302,9 @@ class GroundTruthPerceptionGraphGenerator:
             graph_futures.append(graph_future)
 
         if self._use_remote_mappers:
-            self._graphs = [ray.get(f) for f in graph_futures]
+            if self._cf_goal_descriptors is not None:
+                for mapper in self._mappers:
+                    mapper.gen_counterfactual_costmaps.remote()
 
             if return_costmaps:
                 costmap_fs = [
@@ -1286,6 +1312,9 @@ class GroundTruthPerceptionGraphGenerator:
                     for i, goal_descriptor in enumerate(goal_descriptors)
                 ]
                 return ray.get(costmap_fs)
+            # TODO: No need to get the graphs on every step (they are obtained
+            # via get_graph in get_final_data now and are not returned from update):
+            # self._graphs = [ray.get(f) for f in graph_futures]
         else:
             self._graphs = graph_futures
             # for graph in self._graphs:
@@ -1387,6 +1416,7 @@ class PredictedCostmapImageGenerator:
         use_remote_mappers=False,
         **kwargs,
     ):
+
         self._edge_weight_name = edge_weight_name
         self._cost_scale = costed_segment_max
         self._max_seq_len = max_seq_len

@@ -165,6 +165,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             num_splits=self.config.NUM_ENVIRONMENTS,
             pvr_keys=pvr_config.pvr_keys,
             nv_keys=pvr_config.non_visual_keys,
+            use_dataset_frac=pvr_config.use_dataset_frac,
         )
         # TODO: This is assuming a single "environment". Thus, we need only num_steps
         # to fill the RolloutStorage. In future, we will create a separate stream from
@@ -740,7 +741,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         #     ["DEMONSTRATION_SENSOR", "INFLECTION_WEIGHT_SENSOR"]
         # )
         # self.config.freeze()
-        # seed = self.config.TASK_CONFIG.SEED
+        seed = self.config.TASK_CONFIG.SEED
         # random.seed(seed)
         # np.random.seed(seed)
         # torch.manual_seed(seed)
@@ -871,6 +872,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         rewards, infos = None, None
         dones = [True for _ in range(config.NUM_ENVIRONMENTS)]
+        episode_lengths = [0 for _ in range(config.NUM_ENVIRONMENTS)]
 
         current_episodes = self.envs.current_episodes()
 
@@ -882,7 +884,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         pvr_keys = self.config.TASK_CONFIG.PVR.pvr_keys
 
         if pvr_keys:
-            data_generator = get_data_generators(config, config.NUM_ENVIRONMENTS)[0]
+            data_generator = get_data_generators(
+                config, config.NUM_ENVIRONMENTS, seed=seed
+            )
+
+            # TODO: Support multiple data generators here:
+            data_generator = data_generator[0]
+
             profiler.enter("generate_pvrs")
             batch = self.add_pvrs_to_batch(
                 batch,
@@ -937,6 +945,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             profiler.enter("step_envs")
 
             outputs = self.envs.step(step_data)
+
+            episode_lengths = [l + 1 for l in episode_lengths]
 
             profiler.exit("step_envs")
             profiler.enter("process_batch")
@@ -1001,7 +1011,17 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     episode_stats = {"reward": current_episode_reward[i].item()}
                     episode_stats.update(self._extract_scalars_from_info(infos[i]))
                     episode_stats["completion_idx"] = len(stats_episodes)
+                    episode_stats["episode_length"] = episode_lengths[i]
+                    episode_stats["successful_episode_lengths"] = (
+                        episode_lengths[i] if episode_stats["success"] else 0.0
+                    )
+                    episode_stats["ep_info"] = {
+                        "object_category": current_episodes[i].object_category,
+                    }
+
+                    # Reset stats:
                     current_episode_reward[i] = 0
+                    episode_lengths[i] = 0
 
                     # use scene_id + episode_id as unique id for storing stats
                     stats_episodes[stats_id] = episode_stats
@@ -1047,24 +1067,12 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     profiler.enter("get_current_episode_at")
                     current_episodes[i] = self.envs.call_at(i, CURRENT_EPISODE_NAME)
                     profiler.exit("get_current_episode_at")
-                    # if (
-                    #     current_episodes[i].scene_id,
-                    #     current_episodes[i].episode_id,
-                    # ) in stats_episodes:
-                    #     envs_to_pause.append(i)
 
-                # episode continues
-                if len(self.config.VIDEO_OPTION) > 0:
-                    # TODO move normalization / channel changing out of the policy and undo it here
-                    frame = observations_to_image(
-                        {k: v[i] for k, v in batch.items()},
-                        infos[i],
-                        extra_sensors=config.POLICY.RGB_ENCODER.costmap_names,
-                    )
-                    if self.config.VIDEO_RENDER_ALL_INFO:
-                        frame = overlay_frame(frame, infos[i])
-
-                    rgb_frames[i].append(frame)
+                    if (
+                        current_episodes[i].scene_id,
+                        current_episodes[i].episode_id,
+                    ) in stats_episodes:
+                        envs_to_pause.append(i)
 
             profiler.exit("logging_and_video_generation")
 
@@ -1084,6 +1092,20 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     pvr_keys=pvr_keys,
                 )
                 profiler.exit("generate_pvrs")
+
+            # Store video frames after PVRs have been added:
+            for i in range(n_envs):
+                if len(self.config.VIDEO_OPTION) > 0:
+                    # TODO move normalization / channel changing out of the policy and undo it here
+                    frame = observations_to_image(
+                        {k: v[i] for k, v in batch.items()},
+                        infos[i],
+                        extra_sensors=config.POLICY.RGB_ENCODER.costmap_names,
+                    )
+                    if self.config.VIDEO_RENDER_ALL_INFO:
+                        frame = overlay_frame(frame, infos[i])
+
+                    rgb_frames[i].append(frame)
 
             not_done_masks = not_done_masks.to(device=self.device)
 
@@ -1125,10 +1147,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         num_episodes = len(stats_episodes)
         aggregated_stats = {}
+        skip_keys = {"ep_info"}
+
         for stat_key in next(iter(stats_episodes.values())).keys():
-            aggregated_stats[stat_key] = (
-                sum(v[stat_key] for v in stats_episodes.values()) / num_episodes
-            )
+            if stat_key not in skip_keys:
+                aggregated_stats[stat_key] = (
+                    sum(v[stat_key] for v in stats_episodes.values()) / num_episodes
+                )
 
         for k, v in aggregated_stats.items():
             logger.info(f"Average episode {k}: {v:.4f}")
@@ -1184,13 +1209,14 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
     def log_running_eval_stats(self, stats_episodes, writer, output_dir, profiler=None):
         os.makedirs(output_dir, exist_ok=True)
-        stats_episodes = {
-            f"{k[0]}_{k[1]}": v for k, v in stats_episodes.items()
-        }
+        stats_episodes = {f"{k[0]}_{k[1]}": v for k, v in stats_episodes.items()}
+
         # Dump raw stats to json:
-        print(f"{stats_episodes=}")
         with open(f"{output_dir}/stats.json", "w") as f:
             json.dump(stats_episodes, f)
+
+        # Skip non-numeric stats for logging to wandb:
+        skip_keys = {"ep_info"}
 
         # Write intermediate stats:
         # TODO: The last done envs are not being logged, as done=true
@@ -1214,6 +1240,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 writer.add_scalar(f"performance/{k}", v, num_episodes_completed)
 
         for k in next(iter(stats_episodes.values())).keys():
+            if k in skip_keys:
+                continue
             total = sum(v[k] for v in stats_episodes.values())
             writer.add_scalar(
                 f"running_averages/{k}",
@@ -1223,4 +1251,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         for k, v in stats_episodes.items():
             for k_, v_ in v.items():
+                if k_ in skip_keys:
+                    continue
                 writer.add_scalar(f"eval/{k_}", v_, num_episodes_completed)
