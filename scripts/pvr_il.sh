@@ -9,12 +9,14 @@ config="configs/experiments/il_objectnav.yaml"
 DATA_DIR=$1
 NV_DATASET=$2
 PVR_DATASET=$3
-EXP_NAME=$4
-GROUP_NAME=$5
+PVR_KEY=$4
+COSTMAP_CHANNELS=$5
+EXP_NAME=$6
+GROUP_NAME=$7
 
 DATA_PATH="$DATA_DIR/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 TENSORBOARD_DIR="$DATA_DIR/tb/objectnav_il/$EXP_NAME/"
-CHECKPOINT_DIR="$DATA_DIR/checkpoints/objectnav_il/$EXP_NAME/"
+CHECKPOINT_DIR="$DATA_DIR/checkpoints/objectnav_il/$EXP_NAME/$(date "+%Y_%m_%d_%H_%M_%S")"
 INFLECTION_COEF=3.234951275740812
 
 mkdir -p $TENSORBOARD_DIR
@@ -29,7 +31,7 @@ echo "In ObjectNav IL DDP"
 # --nnodes 1 \
 python -u -m torch.distributed.run \
     --master_port 29504 \
-    --nproc_per_node 1 \
+    --nproc_per_node 2 \
     run.py \
     --exp-config $config \
     --run-type train \
@@ -45,8 +47,8 @@ python -u -m torch.distributed.run \
     IL.BehaviorCloning.wd 1e-6 \
     IL.BehaviorCloning.num_steps 64 \
     IL.BehaviorCloning.num_mini_batch 8 \
+    IL.BehaviorCloning.num_accumulated_gradient_steps 4 \
     IL.BehaviorCloning.use_gradient_accumulation True \
-    IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
     POLICY.PVR_ENCODER.num_heads 4 \
@@ -55,13 +57,21 @@ python -u -m torch.distributed.run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 4 \
+    POLICY.RGB_ENCODER.input_channels 3 \
+    POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
+    TASK_CONFIG.PVR.pvr_key $PVR_KEY \
+
+    # 1 GPU:
+    # IL.BehaviorCloning.num_steps 64 \
+    # IL.BehaviorCloning.num_mini_batch 8 \
+    # IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
+
     # POLICY.STATE_ENCODER.hidden_size 128 \
     # NUM_UPDATES 102000 \
     # NUM_ENVIRONMENTS 4 \

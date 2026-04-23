@@ -88,7 +88,6 @@ class ILAgent(nn.Module):
         data_generator = rollouts.recurrent_generator(self.num_mini_batch)
         cross_entropy_loss = torch.nn.CrossEntropyLoss(reduction="none")
         hidden_states = []
-
         num_correct_actions = 0.0
 
         for batch in data_generator:

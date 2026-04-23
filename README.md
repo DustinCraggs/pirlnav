@@ -27,7 +27,7 @@ Read more in the [paper]().
 
 New:
 
-```
+```bash
 git submodule update --init
 
 conda create -n pirlnav python=3.10 cmake=3.14.0
@@ -44,11 +44,21 @@ pip install -e habitat-lab
 pip install -e .
 
 pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
-pip install zarr ifcfg einops strictfire natsort hydra-core wandb==0.19.8 numpy==1.24.0
+# pip install zarr ifcfg einops strictfire natsort hydra-core wandb==0.19.8 numpy==1.24.0
+pip install zarr ifcfg einops strictfire natsort hydra-core wandb numpy==1.26
+
+# For Ray, transformers:
+pip install "ray[serve]" transformers
+
+# Phoenix:
+module load Mesa/23.1.4-GCCcore-12.3.0
+# Maybe:
+conda install -c conda-forge libstdcxx-ng sysroot_linux-64
+conda install -c conda-forge libgl libegl
 
 # sg_habitat:
-pip install transformers h5py
-conda install spatialmath-python
+pip install transformers h5py kornia
+conda install -c conda-forge spatialmath-python
 pip install git+https://github.com/openai/CLIP.git
 ```
 

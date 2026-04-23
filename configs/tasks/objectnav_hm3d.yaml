@@ -122,6 +122,7 @@ REPRESENTATION_GENERATOR:
       # model_path: "/data/drive2/models/clip-vit-base-patch32"
     # ground_truth_costmap:
     #   resize_and_crop_to: 128
+
     predicted_costmap:
       cost_predictor_checkpoint_paths: [
         "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
@@ -165,11 +166,13 @@ REPRESENTATION_GENERATOR:
 
     # costmap_visualisation:
     #   cost_predictor_checkpoint_paths: ["/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_999.pth"]
+      cf_goals: ["chair", "bed", "toilet", "plant", "tv_monitor", "sofa"]
+      use_observed_node_data: True
     #   costed_segment_max: 0.8
     #   edge_weight_name: "e3d"
     #   resize_and_crop_to: 256
     #   max_descriptor_update_image_frac: 0.3
-    #   use_loaded_gt_graphs: True
+    #   use_loaded_gt_graphs: False
     #   graph_base_path: /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/gt_perception_graphs_fix_ep_metadata_w_descriptors
     #   graph_name: gt_perception_graph_label_descriptors.pkl.gz
     #   use_log_costs: True
@@ -197,28 +200,52 @@ REPRESENTATION_GENERATOR:
 
 
 PVR:
+  use_dataset_frac: 1.0
   use_pvr_encoder: False
   use_fixed_size_embedding: False
   pvr_data_path: "pvr_data/one_percent_two/clip_data"
   non_visual_obs_data_path: "pvr_data/one_percent/non_visual_data"
+  # This is a hack to make it easier to configure via the CLI (don't think lists
+  # can be specified...):
+  pvr_key: null
+  # pvr_key: "predicted_costmap"
+
   # pvr_keys: ["cls"]
-  # pvr_keys: []
+  pvr_keys: []
   # pvr_keys: ["rgb"]
   # pvr_keys: ["last_hidden_layer_pooled", "cls"]
   # pvr_keys: ["last_two_hidden_layers"]
   # pvr_keys: ["rgb", "goal_costmap"]
   # pvr_keys: ["gt_costmap"]
-  pvr_keys: ["predicted_costmap"]
+  # pvr_keys: ["predicted_costmap"]
   # pvr_keys: ["rgb", "predicted_costmap"]
   # pvr_keys: ["rgb", "goal_costmap"]
   # pvr_keys: ["rgb", "gt_costmap"]
   # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
+
+  # RGB is now included in the same dataset as the non-visual observations:
   non_visual_keys: ["rgb", "done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "cls"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "cls"]
   # obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_hidden_layer_pooled", "cls"]
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers"]
+  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "goal_costmap"]
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "gt_costmap"]
+  
+  # RGB:
+  # pvr_keys: []
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
+
+  # Pred costmap:
+  pvr_keys: ["predicted_costmap"]
   obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb", "predicted_costmap"]
+
+  # GT costmap:
+  # pvr_keys: ["gt_costmap"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb", "gt_costmap"]
+
+  # Goal costmap:
+  # pvr_keys: ["goal_costmap"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb", "goal_costmap"]
+
