@@ -47,7 +47,7 @@ python -u -m torch.distributed.run \
     IL.BehaviorCloning.wd 1e-6 \
     IL.BehaviorCloning.num_steps 64 \
     IL.BehaviorCloning.num_mini_batch 8 \
-    IL.BehaviorCloning.num_accumulated_gradient_steps 4 \
+    IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \

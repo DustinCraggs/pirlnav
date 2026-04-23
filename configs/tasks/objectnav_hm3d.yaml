@@ -200,7 +200,6 @@ PVR:
   # pvr_key: "predicted_costmap"
 
   # pvr_keys: ["cls"]
-  pvr_keys: []
   # pvr_keys: ["rgb"]
   # pvr_keys: ["last_hidden_layer_pooled", "cls"]
   # pvr_keys: ["last_two_hidden_layers"]
@@ -223,12 +222,12 @@ PVR:
   # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "gt_costmap"]
   
   # RGB:
-  # pvr_keys: []
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
+  pvr_keys: []
+  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
 
   # Pred costmap:
-  pvr_keys: ["predicted_costmap"]
-  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb", "predicted_costmap"]
+  # pvr_keys: ["predicted_costmap"]
+  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb", "predicted_costmap"]
 
   # GT costmap:
   # pvr_keys: ["gt_costmap"]
