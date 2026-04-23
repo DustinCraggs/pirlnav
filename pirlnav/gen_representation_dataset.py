@@ -9,9 +9,8 @@ import traceback
 import types
 import cv2
 import einops
+import numcodecs
 import numpy as np
-
-# import ray
 import ray
 import torch
 import torchvision
@@ -22,9 +21,11 @@ import requests
 import io
 import habitat_sim
 import networkx as nx
+import torch.nn.functional as F
+
 
 from enum import Enum
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 from habitat_sim.utils.common import quat_to_magnum
 from habitat.sims.habitat_simulator.actions import HabitatSimV0ActionSpaceConfiguration
@@ -300,12 +301,25 @@ class GraphDataStorage:
 
 class ZarrDataStorage:
 
-    def __init__(self, output_path, episodes, batch_chunk_size=1000, **kwargs):
+    def __init__(
+        self,
+        output_path,
+        episodes,
+        batch_chunk_size=1000,
+        use_background_thread=True,
+        **kwargs,
+    ):
         self._output_path = output_path
         self._batch_chunk_size = batch_chunk_size
 
         self._zarr_file = None
         self._completed_eps = []
+
+        self._use_background_thread = use_background_thread
+        if self._use_background_thread:
+            # max_workers=1 creates a perfect queue preventing memory explosions
+            # and race conditions around json and zarr initializations.
+            self._executor = ThreadPoolExecutor(max_workers=1)
 
         # The episode index maps the scene_id, episode_id, and object category to the
         # row in the zarr file:
@@ -331,25 +345,38 @@ class ZarrDataStorage:
         # In older versions of zarr, "meta*" names are reserved, so prefix with "_":
         self._meta_group = self._zarr_file.require_group("_meta")
 
+        # compressor = numcodecs.Blosc(
+        #     cname="lz4", clevel=1, shuffle=numcodecs.Blosc.BITSHUFFLE
+        # )
+
         for key, data_array in data.items():
             chunks = [None] * len(data_array.shape)
             chunks[0] = self._batch_chunk_size
-
-            # self._data_group[key] = zarr.create(
-            #     shape=(self._total_length, *data_array.shape[1:]),
-            #     dtype=data_array.dtype,
-            #     chunks=chunks,
-            #     overwrite=False,
-            # )
 
             self._data_group.require_dataset(
                 key,
                 shape=(self._total_length, *data_array.shape[1:]),
                 dtype=data_array.dtype,
                 chunks=chunks,
+                # compressor=compressor,
             )
 
     def save_episode(self, data, scene_id, episode_id, object_category):
+        if self._use_background_thread:
+            # We must shallow-copy the list so that if the main thread
+            # clears the original list, the background thread still has the data.
+            cloned_data = list(data)
+            self._executor.submit(
+                self._save_episode_impl,
+                cloned_data,
+                scene_id,
+                episode_id,
+                object_category,
+            )
+        else:
+            self._save_episode_impl(data, scene_id, episode_id, object_category)
+
+    def _save_episode_impl(self, data, scene_id, episode_id, object_category):
         row, expected_length = self._episode_index[
             (scene_id, episode_id, object_category)
         ]
@@ -392,7 +419,10 @@ class ZarrDataStorage:
             f.write(f"{ep_id}\n")
 
     def close(self):
-        pass
+        if self._use_background_thread:
+            # This safely blocks the main thread from exiting
+            # until all queued background writes have finished.
+            self._executor.shutdown(wait=True)
 
 
 class NomadDataStorage:
@@ -554,6 +584,8 @@ class RepresentationGenerator:
         full_sub_split_index = sub_split_index.copy()
 
         filter_existing_path = config["TASK_CONFIG"]["DATASET"]["FILTER_EXISTING_PATH"]
+
+        print(f"Filter existing path: {filter_existing_path}")
         if filter_existing_path is not None:
             with open(filter_existing_path, "r") as f:
                 lines = f.readlines()
@@ -565,8 +597,8 @@ class RepresentationGenerator:
                 ep
                 for ep in sub_split_index
                 if (
-                    # ep["scene_id"].split("/")[-2],
-                    ep["scene_id"],
+                    ep["scene_id"].split("/")[-2],
+                    # ep["scene_id"],
                     ep["episode_id"],
                     ep["object_category"],
                 )
@@ -1014,7 +1046,7 @@ class GroundTruthPerceptionGraphGenerator:
         hfov=None,
         segmentor_model_path=None,
         use_remote_mappers=False,
-        cost_predictor_checkpoint_path=None,
+        cost_predictor_checkpoint_paths=None,
         use_inf_mapping=False,
         matching_window_size=3,
         num_kp_threshold=1,
@@ -1131,10 +1163,29 @@ class GroundTruthPerceptionGraphGenerator:
 
             self._mappers = []
 
-            if cost_predictor_checkpoint_path:
-                cost_predictor_worker = get_cost_predictor_worker(
-                    cost_predictor_checkpoint_path
-                )
+            cost_predictors = {}
+
+            if cost_predictor_checkpoint_paths:
+                for path in cost_predictor_checkpoint_paths:
+                    label = f"{path.split('/')[-2]}_{path.split('/')[-1].split('.')[0]}"
+                    cost_predictor_worker = get_cost_predictor_worker(
+                        path, deployment_name=label
+                    )
+
+                    _, config = load_checkpoint(path)
+                    node_attributes = config["dataset"]["observation_attributes"]
+                    edge_weight_name = config["dataset"]["edge_weight_name"]
+
+                    cost_predictors[label] = CostPredictor(
+                        cost_predictor_worker,
+                        node_attributes,
+                        edge_weight_name,
+                        image_height,
+                        image_width,
+                        cost_scale=0.8,
+                        max_seq_len=None,
+                        cost_pad_value=1.0,
+                    )
 
             for i in range(num_envs):
                 descriptor_generator = get_descriptor_generator(clip_worker)
@@ -1156,24 +1207,10 @@ class GroundTruthPerceptionGraphGenerator:
                     geometry_updater = None
                 else:
                     geometry_updater = DepthBasedGeometryUpdater(
-                        depth_worker, image_width, image_height, hfov=hfov
-                    )
-
-                cost_predictor = None
-                if cost_predictor_checkpoint_path:
-                    _, config = load_checkpoint(cost_predictor_checkpoint_path)
-                    node_attributes = config["dataset"]["observation_attributes"]
-                    edge_weight_name = config["dataset"]["edge_weight_name"]
-
-                    cost_predictor = CostPredictor(
-                        cost_predictor_worker,
-                        node_attributes,
-                        edge_weight_name,
-                        image_height,
-                        image_width,
-                        cost_scale=0.8,
-                        max_seq_len=None,
-                        cost_pad_value=1.0,
+                        depth_worker,
+                        img_width=image_width,
+                        img_height=image_height,
+                        hfov=hfov,
                     )
 
                 env_vis_dir = f"{vis_dir}/env_{i}" if vis_dir is not None else None
@@ -1183,7 +1220,7 @@ class GroundTruthPerceptionGraphGenerator:
                     matcher=matcher,
                     geometry_updater=geometry_updater,
                     descriptor_generator=descriptor_generator,
-                    cost_predictor=cost_predictor,
+                    cost_predictors=cost_predictors,
                     min_segment_area=50,
                     max_descriptor_update_image_frac=0.3,
                     matching_window_size=matching_window_size,
@@ -1191,7 +1228,7 @@ class GroundTruthPerceptionGraphGenerator:
                     add_matching_sim_segments=False,
                     use_gt_depth=use_gt_depth,
                     use_gt_segments=use_gt_segments,
-                    use_segmaster_geometry=use_segmaster_geometry,
+                    use_matcher_geometry=use_segmaster_geometry,
                     remove_mask_edges=remove_mask_edges,
                     use_loop_closure=use_loop_closure,
                     loop_closure_exclusion_window=loop_closure_exclusion_window,
@@ -1282,7 +1319,7 @@ class GroundTruthPerceptionGraphGenerator:
 
             if return_costmaps:
                 costmap_fs = [
-                    self._mappers[i].get_latest_frame_costmap.remote(goal_descriptor)
+                    self._mappers[i].get_latest_frame_costmaps.remote(goal_descriptor)
                     for i, goal_descriptor in enumerate(goal_descriptors)
                 ]
                 return ray.get(costmap_fs)
@@ -1379,8 +1416,9 @@ class PredictedCostmapImageGenerator:
     def __init__(
         self,
         num_envs,
-        model_path,
         edge_weight_name,
+        cost_predictor_checkpoint_paths,
+        distributional_cost_predictors,
         resize_and_crop_to=None,
         costed_segment_max=0.8,
         max_seq_len=300,
@@ -1391,6 +1429,7 @@ class PredictedCostmapImageGenerator:
         self._cost_scale = costed_segment_max
         self._max_seq_len = max_seq_len
         self._use_remote_mappers = use_remote_mappers
+        self._resize_and_crop_to = resize_and_crop_to
 
         self._descriptor_generator = ClipDescriptorGenerator()
 
@@ -1405,21 +1444,35 @@ class PredictedCostmapImageGenerator:
         self._graph_generator = GroundTruthPerceptionGraphGenerator(
             num_envs,
             use_remote_mappers=use_remote_mappers,
-            cost_predictor_checkpoint_path=model_path,
+            cost_predictor_checkpoint_paths=cost_predictor_checkpoint_paths,
             **kwargs,
         )
 
-        self.data_names = ["predicted_costmap"]
+        self.data_names = []
+        for path in cost_predictor_checkpoint_paths:
+            name = path.split("/")[-2]
+            epoch = path.split("/")[-1].split(".")[0]
+            self.data_names.append(f"predicted_costmap_{name}_{epoch}")
+
+        for path in distributional_cost_predictors:
+            name = path.split("/")[-2]
+            epoch = path.split("/")[-1].split(".")[0]
+            self.data_names.append(f"predicted_costdist_{name}_{epoch}")
 
         # TODO: Create cachedict class?
         self._goal_descriptor_cache = {}
 
-        self._transforms = []
-        if resize_and_crop_to:
-            self._transforms.append(torchvision.transforms.Resize(resize_and_crop_to))
-            self._transforms.append(
-                torchvision.transforms.CenterCrop(resize_and_crop_to)
-            )
+        # self._transforms = []
+        # if resize_and_crop_to:
+        #     self._transforms.append(
+        #         torchvision.transforms.Resize(
+        #             resize_and_crop_to,
+        #             interpolation=torchvision.transforms.InterpolationMode.NEAREST,
+        #         )
+        #     )
+        #     self._transforms.append(
+        #         torchvision.transforms.CenterCrop(resize_and_crop_to)
+        #     )
 
     def generate(
         self,
@@ -1485,7 +1538,8 @@ class PredictedCostmapImageGenerator:
         return_tensors=False,
     ):
         goal_descriptors = self._get_goal_descriptors(ep_metadata)
-        costmaps = self._graph_generator.generate(
+
+        results = self._graph_generator.generate(
             ep_metadata,
             actions,
             observations,
@@ -1498,12 +1552,41 @@ class PredictedCostmapImageGenerator:
             goal_descriptors=goal_descriptors,
         )
 
-        costmaps = np.array(costmaps)
+        costmap_dicts = [result[0] for result in results]
+        costdist_dicts = [result[1] for result in results]
 
-        if self._transforms:
-            costmaps = [self._apply_transforms(costmap) for costmap in costmaps]
+        output_data = {}
 
-        return {"predicted_costmap": costmaps}
+        # Iterate over each expected label using our declared data_names
+        for data_name in self.data_names:
+            if data_name.startswith("predicted_costmap_"):
+                label = data_name.replace("predicted_costmap_", "")
+
+                # Extract out the specific costmap batch for this label index
+                batch_cm = np.array([cm_dict.get(label) for cm_dict in costmap_dicts])
+
+                batch_cm = self._apply_transforms(batch_cm)
+                # if self._transforms:
+                #     batch_cm = [self._apply_transforms(cm) for cm in batch_cm]
+
+                output_data[data_name] = batch_cm
+
+            elif data_name.startswith("predicted_costdist_"):
+                label = data_name.replace("predicted_costdist_", "")
+
+                # Extract out the specific costdist batch for this label index
+                batch_dist = np.array(
+                    [dist_dict.get(label) for dist_dict in costdist_dicts]
+                )
+
+                batch_dist = self._apply_transforms(batch_dist)
+
+                # if self._transforms:
+                #     batch_dist = [self._apply_transforms(dist) for dist in batch_dist]
+
+                output_data[data_name] = batch_dist
+
+        return output_data
 
     def _get_goal_descriptors(self, ep_metadata):
         goals = [ep.object_category for ep in ep_metadata]
@@ -1547,12 +1630,79 @@ class PredictedCostmapImageGenerator:
 
         return costmap
 
-    def _apply_transforms(self, costmap):
-        costmap = torch.as_tensor(costmap).permute(2, 0, 1)
-        for transform in self._transforms:
-            costmap = transform(costmap)
-        costmap = costmap.permute(1, 2, 0)
-        return costmap
+    # def _apply_transforms(self, costmap):
+    #     costmap = torch.as_tensor(costmap).permute(2, 0, 1)
+    #     for transform in self._transforms:
+    #         costmap = transform(costmap)
+    #     costmap = costmap.permute(1, 2, 0)
+    #     return costmap
+
+    def _apply_transforms(self, data, device="cpu"):
+        # if not self._transforms:
+        #     return data
+
+        # Convert list to numpy if necessary, then push to device
+        if not isinstance(data, np.ndarray):
+            data = np.array(data)
+
+        tensor_data = torch.as_tensor(data, device=device)
+
+        # Check if we are dealing with a batched (B, H, W, C) or single (H, W, C) array
+        is_batched = tensor_data.ndim == 4
+
+        if is_batched:
+            # (Batch, Height, Width, Channels) -> (Batch, Channels, Height, Width)
+            tensor_data = tensor_data.permute(0, 3, 1, 2)
+        else:
+            # (Height, Width, Channels) -> (Channels, Height, Width)
+            tensor_data = tensor_data.permute(2, 0, 1)
+
+        # Use no_grad to prevent PyTorch from building expensive autograd graphs
+        with torch.no_grad():
+            if self._resize_and_crop_to:
+                tensor_data = self._apply_resize_and_crop(tensor_data)
+        #     for transform in self._transforms:
+        #         tensor_data = transform(tensor_data)
+
+        if is_batched:
+            # (Batch, Channels, Height, Width) -> (Batch, Height, Width, Channels)
+            tensor_data = tensor_data.permute(0, 2, 3, 1)
+        else:
+            # (Channels, Height, Width) -> (Height, Width, Channels)
+            tensor_data = tensor_data.permute(1, 2, 0)
+
+        # Safely return to CPU memory as standard numpy
+        return tensor_data.cpu().numpy()
+
+    def _apply_resize_and_crop(self, batched_tensors):
+        target = self._resize_and_crop_to
+
+        # 1. Compute exact proportional resize
+        h, w = batched_tensors.shape[-2:]
+
+        if h < w:
+            new_h = target
+            new_w = int(
+                target * (w / h)
+            )  # Explicit float truncation matches Torchvision
+        elif w < h:
+            new_w = target
+            new_h = int(target * (h / w))
+        else:
+            new_h, new_w = target, target
+        batched_tensors = F.interpolate(
+            batched_tensors, size=(new_h, new_w), mode="nearest"
+        )
+
+        # 2. MATCH TORCHVISION'S PRECISE ROUNDING LOGIC
+        crop_top = int(round((new_h - target) / 2.0))
+        crop_left = int(round((new_w - target) / 2.0))
+
+        batched_tensors = batched_tensors[
+            ..., crop_top : crop_top + target, crop_left : crop_left + target
+        ]
+
+        return batched_tensors
 
 
 class CostmapVisualisationGenerator:
@@ -1591,7 +1741,12 @@ class CostmapVisualisationGenerator:
 
         self._transforms = []
         if resize_and_crop_to:
-            self._transforms.append(torchvision.transforms.Resize(resize_and_crop_to))
+            self._transforms.append(
+                torchvision.transforms.Resize(
+                    resize_and_crop_to,
+                    interpolation=torchvision.transforms.InterpolationMode.NEAREST,
+                )
+            )
             self._transforms.append(
                 torchvision.transforms.CenterCrop(resize_and_crop_to)
             )
