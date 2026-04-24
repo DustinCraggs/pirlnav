@@ -291,9 +291,9 @@ class ObjectNavILMAENet(Net):
         elif self.visual_encoder is not None:
             rgb_obs = observations["rgb"]
 
-            # if self._costmap_names:
-            #     # Pre-resize the RGB observation to match costmap size:
-            #     rgb_obs = self._costmap_resize(rgb_obs)
+            if self._costmap_names:
+                # Pre-resize the RGB observation to match costmap size:
+                rgb_obs = self._costmap_resize(rgb_obs)
 
             # Channel-wise stack rgb and costmaps. This needs to occur before visual
             # transforms in order to apply the same augmentations:

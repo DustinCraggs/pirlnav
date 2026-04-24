@@ -64,7 +64,7 @@ from pirlnav.gen_representation_dataset import (
     RepresentationGenerator,
     get_data_generators,
 )
-from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_pvr_dataset
+from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_fast_zarr_dataset
 from pirlnav.utils.env_utils import construct_envs
 from pirlnav.utils.utils import SimpleProfiler
 
@@ -158,7 +158,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
     def _init_demonstration_dataset(self):
         pvr_config = self.config.TASK_CONFIG.PVR
-        
+
         pvr_keys = pvr_config.pvr_keys
 
         if pvr_config.pvr_key is not None:
@@ -192,9 +192,24 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         example_batch = next(iter(pvr_dataloaders[0]))
 
+        # pvr_dataset = get_fast_zarr_dataset(
+        #     pvr_config.pvr_data_path,
+        #     pvr_config.non_visual_obs_data_path,
+        #     sequence_length=self.config.IL.BehaviorCloning.num_steps,
+        #     pvr_keys=pvr_keys,
+        #     nv_keys=pvr_config.non_visual_keys,
+        # )
+
+        # self._dataloader = DataLoader(
+        #     pvr_dataset, batch_size=self.config.NUM_ENVIRONMENTS, num_workers=8
+        # )
+        # self._dataloader_iter = iter(self._dataloader)
+
+        # example_batch = next(iter(self._dataloader))
+
         visual_keys = [*pvr_config.pvr_keys, "rgb"]
+        # pvr_shapes = {k: example_batch[k][0].shape for k in visual_keys}
         pvr_shapes = {k: example_batch[k].shape for k in visual_keys}
-        # pvr_shapes = {k: example_batch[k].shape for k in pvr_config.pvr_keys}
         # pvr_shapes = {k: (256, 256) for k in pvr_config.pvr_keys}
 
         nv_dataset = zarr.open(pvr_config.non_visual_obs_data_path, mode="r")
@@ -282,6 +297,69 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         self._first_step = False
         # Return number of steps collected
         return num_steps * self.config.NUM_ENVIRONMENTS
+
+    # def _collect_demonstration_batch(self) -> int:
+    #     """
+    #     This replaces _collect_environment_result, as the environments are not required
+    #     when using the PVR demonstration dataset.
+
+    #     This hacks the RolloutStorage buffers in-place to for efficiency instead
+    #     of using insert/advance.
+    #     """
+    #     # batch = self._sample_next_batch()
+    #     batch = next(self._dataloader_iter)
+
+    #     obs_keys = self.config.TASK_CONFIG.PVR.obs_keys
+    #     if self.config.TASK_CONFIG.PVR.pvr_key is not None:
+    #         obs_keys.append(self.config.TASK_CONFIG.PVR.pvr_key)
+
+    #     observations = {k: v.to(self.device) for k, v in batch.items() if k in obs_keys}
+    #     actions = batch["next_actions"].to(self.device)
+    #     dones = batch["done"].to(self.device)
+
+    #     num_steps = self.config.IL.BehaviorCloning.num_steps
+
+    #     # 1. Fast Vectorized Transposition
+    #     actions_t = actions.transpose(0, 1).unsqueeze(-1)
+    #     masks_t = (~dones).transpose(0, 1).unsqueeze(-1)
+
+    #     obs_t = {}
+    #     for k, v in observations.items():
+    #         obs_t[k] = v.transpose(0, 1)
+    #         if k == "inflection_weight":
+    #             obs_t[k] = obs_t[k].reshape(num_steps, -1, 1)
+
+    #     # 2. Unified Buffer Assignment
+    #     # If first step, write to [0:N]. If subsequent, write to [1:N+1].
+    #     offset = 0 if self._first_step else 1
+
+    #     # Fill observations and masks
+    #     for k in obs_t:
+    #         self.rollouts.buffers["observations"][k][offset : num_steps + offset].copy_(
+    #             obs_t[k]
+    #         )
+    #     self.rollouts.buffers["masks"][offset : num_steps + offset].copy_(masks_t)
+
+    #     # If carrying over from a previous batch, inject the leftover action at index 0
+    #     if not self._first_step:
+    #         self.rollouts.buffers["actions"][0].copy_(self._prev_actions)
+    #         self.rollouts.buffers["prev_actions"][1].copy_(self._prev_actions)
+
+    #     # Fill current batch actions. We always reserve the very last action for the
+    #     # NEXT batch.
+    #     self.rollouts.buffers["actions"][offset : num_steps - 1 + offset].copy_(
+    #         actions_t[0 : num_steps - 1]
+    #     )
+    #     self.rollouts.buffers["prev_actions"][offset + 1 : num_steps + offset].copy_(
+    #         actions_t[0 : num_steps - 1]
+    #     )
+
+    #     # Save the final action to carry over, and update the pointer
+    #     self._prev_actions = actions_t[num_steps - 1]
+    #     self.rollouts.current_rollout_step_idxs[0] = num_steps - 1 + offset
+
+    #     self._first_step = False
+    #     return num_steps * self.config.NUM_ENVIRONMENTS
 
     def _setup_actor_critic_agent(self, il_cfg: Config) -> None:
         r"""Sets up actor critic and agent for IL.
@@ -772,7 +850,9 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         # Map location CPU is almost always better than mapping to a CUDA device.
         if self.config.EVAL.SHOULD_LOAD_CKPT:
-            ckpt_dict = self.load_checkpoint(checkpoint_path, map_location="cpu")
+            ckpt_dict = self.load_checkpoint(
+                checkpoint_path, map_location="cpu", weights_only=False
+            )
         else:
             ckpt_dict = {}
 
@@ -1212,13 +1292,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             # return_tensors=True,
         )
         # pvrs = dict(zip(data_generator.data_names, pvrs))
-
+        
         for k in pvr_keys:
             pvr = pvrs[k]
             if isinstance(pvr, list):
                 batch[k] = torch.stack(pvrs[k]).to(self.device)
             else:
-                batch[k] = pvrs[k].to(self.device)
+                batch[k] = torch.tensor(pvrs[k], device=self.device)
         return batch
 
     def log_running_eval_stats(self, stats_episodes, writer, output_dir, profiler=None):

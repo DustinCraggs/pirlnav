@@ -1273,6 +1273,7 @@ class GroundTruthPerceptionGraphGenerator:
         envs,
         skipped_last,
         return_costmaps=False,
+        return_costdists=False,
         goal_descriptors=None,
         skip_env_idxs=None,
     ):
@@ -1345,7 +1346,9 @@ class GroundTruthPerceptionGraphGenerator:
 
             if return_costmaps:
                 costmap_fs = [
-                    self._mappers[i].get_latest_frame_costmaps.remote(goal_descriptor)
+                    self._mappers[i].get_latest_frame_costmaps.remote(
+                        goal_descriptor, return_costdists
+                    )
                     for i, goal_descriptor in enumerate(goal_descriptors)
                 ]
                 return ray.get(costmap_fs)
@@ -1489,6 +1492,8 @@ class PredictedCostmapImageGenerator:
             epoch = path.split("/")[-1].split(".")[0]
             self.data_names.append(f"predicted_costdist_{name}_{epoch}")
 
+        self._generate_costdists = len(distributional_cost_predictors) > 0
+
         # TODO: Create cachedict class?
         self._goal_descriptor_cache = {}
 
@@ -1579,6 +1584,7 @@ class PredictedCostmapImageGenerator:
             envs,
             skipped_last,
             return_costmaps=True,
+            return_costdists=self._generate_costdists,
             goal_descriptors=goal_descriptors,
         )
 

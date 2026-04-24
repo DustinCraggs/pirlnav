@@ -125,14 +125,14 @@ REPRESENTATION_GENERATOR:
 
     predicted_costmap:
       cost_predictor_checkpoint_paths: [
-        "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
         "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
       ]
       distributional_cost_predictors: [
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
       ]
       # cost_predictor_checkpoint_paths: "/home/dc/data/nav_experiments/cost_predictor/segmaster_1_1_20260102_165219/epoch_149.pth"
       edge_weight_name: "e3d"
@@ -166,8 +166,9 @@ REPRESENTATION_GENERATOR:
 
     # costmap_visualisation:
     #   cost_predictor_checkpoint_paths: ["/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_999.pth"]
-      cf_goals: ["chair", "bed", "toilet", "plant", "tv_monitor", "sofa"]
-      use_observed_node_data: True
+      cf_goals: null
+      # cf_goals: ["chair", "bed", "toilet", "plant", "tv_monitor", "sofa"]
+      # use_observed_node_data: True
     #   costed_segment_max: 0.8
     #   edge_weight_name: "e3d"
     #   resize_and_crop_to: 256

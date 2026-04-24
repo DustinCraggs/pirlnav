@@ -47,6 +47,25 @@ class ZarrDataset(IterableDataset):
         }
 
 
+class FastZarrDataset(Dataset):
+    def __init__(self, zarr_array_dict, sequence_length):
+        self.arrays = zarr_array_dict
+        self.seq_len = sequence_length
+        # Assume all arrays have the same length:
+        self.total_length = self.arrays[next(iter(self.arrays))].shape[0]
+
+    def __len__(self):
+        # Number of valid chunk starting positions
+        return self.total_length // self.seq_len
+
+    def __getitem__(self, idx):
+        # Map index directly to a chunk in the Zarr array
+        start = idx * self.seq_len
+        end = start + self.seq_len
+
+        return {k: v[start:end] for k, v in self.arrays.items()}
+
+
 class DictDataset(Dataset):
     """StackDataset is not available in PyTorch 1.12.1, so implementing here."""
 
@@ -100,13 +119,15 @@ def create_pvr_dataset_splits(
     dataset = get_pvr_dataset(pvr_dataset_path, nv_dataset_path, pvr_keys, nv_keys)
     dataset_length = len(dataset)
 
+    orig_length = dataset_length
+
     if use_dataset_frac is not None:
         dataset_length = int(dataset_length * use_dataset_frac)
 
     # Need to divide dataset into episodes (i.e. episodes should not be broken across
     # multiple splits):
     ep_index = sorted(ep_index, key=lambda ep_info: ep_info["row"])
-    ep_boundaries = [*[ep_info["row"] for ep_info in ep_index], dataset_length]
+    ep_boundaries = [*[ep_info["row"] for ep_info in ep_index], orig_length]
 
     target_split_length = dataset_length // num_splits
     target_end_rows = [target_split_length * (i + 1) for i in range(num_splits)]
@@ -180,6 +201,24 @@ def get_pvr_dataset(
     arrays = {**pvr_arrays, **nv_arrays}
 
     dataset = ZarrDataset(arrays, start=start_idx, end=end_idx)
+    return dataset
+
+
+def get_fast_zarr_dataset(
+    pvr_dataset_path, nv_dataset_path, sequence_length, pvr_keys=None, nv_keys=None
+):
+    pvr_dataset = zarr.open(pvr_dataset_path, mode="r")
+    nv_dataset = zarr.open(nv_dataset_path, mode="r")
+
+    pvr_keys = list(pvr_dataset["data"].keys()) if pvr_keys is None else pvr_keys
+    nv_keys = list(nv_dataset["data"].keys()) if nv_keys is None else nv_keys
+
+    pvr_arrays = {k: v for k, v in pvr_dataset["data"].items() if k in pvr_keys}
+    nv_arrays = {k: v for k, v in nv_dataset["data"].items() if k in nv_keys}
+
+    arrays = {**pvr_arrays, **nv_arrays}
+
+    dataset = FastZarrDataset(arrays, sequence_length)
     return dataset
 
 

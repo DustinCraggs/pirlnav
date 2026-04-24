@@ -29,6 +29,7 @@ def make_env_fn(
 
     if episode_index is not None:
         dataset.episodes = filter_episodes(dataset.episodes, episode_index)
+        print(f"after {len(dataset.episodes)=}")
         print(
             f"Creating env with {len(dataset.episodes)} episodes "
             f"({get_num_unique(dataset.episodes)} unique scene-object pairs)"
@@ -210,14 +211,14 @@ def construct_envs(
     else:
         vector_env_cls = habitat.VectorEnv
 
-    # ep_indexes = itertools.repeat(episode_index)
+    ep_indexes = itertools.repeat(episode_index)
 
     # TODO: Temp:
     # Split ep_index into num_environment splits:
-    ep_indexes = [list() for _ in range(num_environments)]
-    if episode_index is not None:
-        for i, ep in enumerate(episode_index):
-            ep_indexes[i % num_environments].append(ep)
+    # ep_indexes = [list() for _ in range(num_environments)]
+    # if episode_index is not None:
+    #     for i, ep in enumerate(episode_index):
+    #         ep_indexes[i % num_environments].append(ep)
 
     envs = vector_env_cls(
         make_env_fn=make_env_fn,
