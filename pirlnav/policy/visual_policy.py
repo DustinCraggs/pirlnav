@@ -171,7 +171,7 @@ class ObjectNavILMAENet(Net):
                 for p in self.visual_encoder.backbone.parameters():
                     p.requires_grad = False
 
-            self.visual_encoder.set_up_costmap_stem()
+            # self.visual_encoder.set_up_costmap_stem()
 
         self.rnn_input_size = rnn_input_size
 
