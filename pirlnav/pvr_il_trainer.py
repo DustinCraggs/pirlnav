@@ -914,6 +914,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         # config.TASK_CONFIG.DATASET.TYPE = "ObjectNav-v2"
         config.freeze()
 
+        costmap_names = [config.TASK_CONFIG.PVR.pvr_key]
+
+        if costmap_names[0] is None:
+            costmap_names = config.POLICY.RGB_ENCODER.get(
+                "costmap_names", []
+            )
+
         if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
             config.defrost()
             config.TASK_CONFIG.TASK.MEASUREMENTS.append("TOP_DOWN_MAP")
@@ -1240,7 +1247,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     frame = observations_to_image(
                         {k: v[i] for k, v in batch.items()},
                         infos[i],
-                        extra_sensors=config.POLICY.RGB_ENCODER.costmap_names,
+                        extra_sensors=costmap_names,
                     )
                     if self.config.VIDEO_RENDER_ALL_INFO:
                         frame = overlay_frame(frame, infos[i])

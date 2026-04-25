@@ -122,12 +122,12 @@ class ObjectNavILMAENet(Net):
 
             if self._costmap_names:
 
-                def _costmap_transform(img):
+                def _costmap_transform(img, interpolation_mode=TF.InterpolationMode.NEAREST_EXACT):
                     img = img.permute(0, 3, 1, 2)
-                    TF.resize(
+                    img = TF.resize(
                         img,
                         rgb_config.image_size,
-                        interpolation=TF.InterpolationMode.NEAREST_EXACT,
+                        interpolation=interpolation_mode,
                     )
                     img = TF.center_crop(img, output_size=rgb_config.image_size)
                     return img.permute(0, 2, 3, 1)
@@ -171,7 +171,7 @@ class ObjectNavILMAENet(Net):
                 for p in self.visual_encoder.backbone.parameters():
                     p.requires_grad = False
 
-            # self.visual_encoder.set_up_costmap_stem()
+            self.visual_encoder.set_up_costmap_stem()
 
         self.rnn_input_size = rnn_input_size
 
@@ -290,16 +290,15 @@ class ObjectNavILMAENet(Net):
             x.append(pvr_embedding)
         elif self.visual_encoder is not None:
             rgb_obs = observations["rgb"]
-
             if self._costmap_names:
                 # Pre-resize the RGB observation to match costmap size:
-                rgb_obs = self._costmap_resize(rgb_obs)
+                rgb_obs = self._costmap_resize(rgb_obs, TF.InterpolationMode.BILINEAR)
 
             # Channel-wise stack rgb and costmaps. This needs to occur before visual
             # transforms in order to apply the same augmentations:
             for costmap_name in self._costmap_names:
                 # orig_shape = observations[costmap_name].shape
-                costmap = self._costmap_resize(observations[costmap_name])
+                costmap = self._costmap_resize(observations[costmap_name], TF.InterpolationMode.NEAREST_EXACT)
 
                 # if costmap_name == "goal_costmap":
                 #     # Convert boolean goal_costmap to float (quick hack as the
@@ -391,7 +390,7 @@ class ObjectNavILMAEPolicy(ILPolicy):
         costmap_names = [config.TASK_CONFIG.PVR.pvr_key]
 
         if costmap_names[0] is None:
-            costmap_names = config.TASK_CONFIG.POLICY.RGB_ENCODER.get(
+            costmap_names = config.POLICY.RGB_ENCODER.get(
                 "costmap_names", []
             )
 

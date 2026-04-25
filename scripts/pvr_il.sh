@@ -31,7 +31,7 @@ echo "In ObjectNav IL DDP"
 # --nnodes 1 \
 python -u -m torch.distributed.run \
     --master_port 29504 \
-    --nproc_per_node 1 \
+    --nproc_per_node 2 \
     run.py \
     --exp-config $config \
     --run-type train \
