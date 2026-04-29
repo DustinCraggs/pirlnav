@@ -47,8 +47,8 @@ python -u -m run \
     TASK_CONFIG.PVR.use_pvr_encoder False \
     POLICY.RGB_ENCODER.input_channels 3 \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
+    POLICY.RGB_ENCODER.use_augmentations_test_time True \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
-    # POLICY.RGB_ENCODER.use_augmentations_test_time False \
 
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path None \

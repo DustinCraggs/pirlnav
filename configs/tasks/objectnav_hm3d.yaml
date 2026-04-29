@@ -125,17 +125,18 @@ REPRESENTATION_GENERATOR:
 
     predicted_costmap:
       cost_predictor_checkpoint_paths: [
-        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
+        "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
+        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
         "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
       ]
       distributional_cost_predictors: [
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor_andrew/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
       ]
-      # cost_predictor_checkpoint_paths: "/home/dc/data/nav_experiments/cost_predictor/segmaster_1_1_20260102_165219/epoch_149.pth"
-      edge_weight_name: "e3d"
+      edge_weight_name: "euclidean_distances.median_distance"
       resize_and_crop_to: 128
     # ground_truth_perception_graph:
       filter_sim_labels: ["ceiling", "floor", "wall", "unlabeled"]

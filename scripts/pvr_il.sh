@@ -31,7 +31,7 @@ echo "In ObjectNav IL DDP"
 # --nnodes 1 \
 python -u -m torch.distributed.run \
     --master_port 29504 \
-    --nproc_per_node 2 \
+    --nproc_per_node 1 \
     run.py \
     --exp-config $config \
     --run-type train \
@@ -57,7 +57,7 @@ python -u -m torch.distributed.run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 4 \
+    POLICY.RGB_ENCODER.input_channels 3 \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \

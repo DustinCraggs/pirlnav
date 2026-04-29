@@ -109,6 +109,7 @@ def get_data_generators(config, num_envs, seed=None):
         "vc_1": Vc1Generator,
         "cogvlm2": CogVlmGenerator,
         "agent_state": AgentStateGenerator,
+        "predicted_depth": PredictedDepthGenerator,
     }
 
     generator_config = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]
@@ -669,7 +670,7 @@ class RepresentationGenerator:
 
         t0_generate = time.perf_counter()
 
-        pbar = tqdm.tqdm(total=total_num_eps)
+        pbar = tqdm.tqdm(total=total_num_eps, smoothing=0)
         while self._remaining_ep_set:
             # "next_actions" contains the actions from the BC dataset:
             actions = [o["next_actions"] for o in observations]
@@ -863,6 +864,114 @@ class RawImageGenerator:
             images = [transform(img) for img in images]
         images = [img.permute(1, 2, 0) for img in images]
         return images
+
+
+class PredictedDepthGenerator(RawImageGenerator):
+
+    def __init__(
+        self,
+        num_envs,
+        depth_model_name="zoedepth",
+        depth_model_path=None,
+        use_remote_mappers=True,
+        correction_factor=0.7494035546520049,
+        seed=None,
+        resize_and_crop_to=None,
+        output_dtype="float16",
+        **kwargs,
+    ):
+        super().__init__(resize_and_crop_to=resize_and_crop_to, **kwargs)
+        self.data_names = ["predicted_depth"]
+        self._use_remote_mappers = use_remote_mappers
+        self._correction_factor = correction_factor
+        self._output_dtype = output_dtype
+
+        if depth_model_path is None:
+            sg_hab_path = os.environ.get("SG_HABITAT_PATH", "")
+            depth_model_path = (
+                f"{sg_hab_path}/model_weights/depth_anything_metric_depth_indoor.pt"
+            )
+
+        if use_remote_mappers:
+            # Requires get_depth_worker to be imported from libs.mapper.parallel_mapper
+            self._depth_worker = get_depth_worker(
+                depth_model_name, depth_model_path, seed=seed
+            )
+        else:
+            import zoedepth.utils.config
+            import zoedepth.models.builder
+
+            self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            config = zoedepth.utils.config.get_config(depth_model_name, "infer", None)
+            config.pretrained_resource = f"local::{depth_model_path}"
+            config.force_keep_ar = True
+            self._depth_model = zoedepth.models.builder.build_model(config)
+            self._depth_model.to(self._device).eval()
+
+    def generate(
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        envs,
+        skipped_last,
+    ):
+        if self._use_remote_mappers:
+            futures = []
+            for obs in observations:
+                # Replicate the scaling and permutation used by DepthBasedGeometryUpdater
+                rgb_tensor = (
+                    torch.tensor(obs["rgb"]).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+                )
+                futures.append(self._depth_worker.infer_batched.remote(rgb_tensor))
+
+            depths = ray.get(futures)
+        else:
+            rgb_tensors = []
+            for obs in observations:
+                rgb_tensors.append(
+                    torch.tensor(obs["rgb"]).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+                )
+            
+            flat_images = torch.cat(rgb_tensors, dim=0)
+            
+            with torch.inference_mode():
+                result = self._depth_model(flat_images.to(self._device))
+            
+            depth_tensors = result["metric_depth"].cpu()
+            
+            depths = [depth_tensors[i:i+1] for i in range(len(rgb_tensors))]
+
+        depths_np = []
+        for depth_tensor in depths:
+            # Post-processing matching parallel_mapper extraction
+            d = depth_tensor.squeeze().cpu().numpy()
+            d *= self._correction_factor
+
+            # Expand dims so that the returned tensor has shape [H, W, 1]
+            # as ZARR concatenation / PVR datasets typically prefer channel-last outputs.
+            if d.ndim == 2:
+                d = np.expand_dims(d, -1)
+            depths_np.append(d)
+
+        if self._transforms:
+            # Apply the inherited resize and crop transforms from RawImageGenerator:
+            depths_np = self._apply_transforms(depths_np)
+            # Transforms return a tensor, convert back to numpy:
+            depths_np = [d.numpy() for d in depths_np]
+
+        if self._output_dtype == "uint8":
+            # Heuristic scale: map 0-10m depth to 0-255 uint8 bounds
+            depths_np = [np.clip(d * 25.5, 0, 255).astype(np.uint8) for d in depths_np]
+        elif self._output_dtype == "float16":
+            depths_np = [d.astype(np.float16) for d in depths_np]
+        else:
+            depths_np = [d.astype(np.float32) for d in depths_np]
+
+        return {"predicted_depth": depths_np}
 
 
 class GroundTruthCostmapImageGenerator(RawImageGenerator):
@@ -1124,7 +1233,8 @@ class GroundTruthPerceptionGraphGenerator:
                     max_descriptor_update_image_frac=max_descriptor_update_image_frac,
                     cost_predictor=cost_predictor,
                     node_attributes=["visual_descriptor"],
-                    edge_weight_name="e3d",
+                    edge_weight_name=edge_weight_name,
+                    seed=seed,
                 )
                 for _ in range(num_envs)
             ]
@@ -1718,9 +1828,7 @@ class PredictedCostmapImageGenerator:
 
         if h < w:
             new_h = target
-            new_w = int(
-                target * (w / h)
-            )  # Explicit float truncation matches Torchvision
+            new_w = int(target * (w / h))
         elif w < h:
             new_w = target
             new_h = int(target * (h / w))
