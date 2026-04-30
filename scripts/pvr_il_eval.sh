@@ -32,7 +32,7 @@ python -u -m run \
     VIDEO_DIR "$DATA_DIR/videos/$GROUP_NAME/$EXP_NAME" \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \
-    NUM_ENVIRONMENTS 10 \
+    NUM_ENVIRONMENTS 12 \
     EVAL.SPLIT "val" \
     EVAL.USE_CKPT_CONFIG False \
     TASK_CONFIG.DATASET.TYPE "ObjectNav-v1" \
@@ -45,7 +45,7 @@ python -u -m run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 3 \
+    POLICY.RGB_ENCODER.input_channels 4 \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
     # POLICY.RGB_ENCODER.use_augmentations_test_time False \

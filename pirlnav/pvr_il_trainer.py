@@ -163,7 +163,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         if pvr_config.pvr_key is not None:
             pvr_keys.append(pvr_config.pvr_key)
 
-        # 1. Determine DDP rank and world size
+        # Determine DDP rank and world size
         if torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
             world_size = torch.distributed.get_world_size()
@@ -171,19 +171,19 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             rank = 0
             world_size = 1
 
-        # 2. Calculate TOTAL splits needed across all GPUs
+        # Calculate TOTAL splits needed across all GPUs
         total_splits_across_gpus = self.config.NUM_ENVIRONMENTS * world_size
 
         pvr_datasets = create_pvr_dataset_splits(
             pvr_config.pvr_data_path,
             pvr_config.non_visual_obs_data_path,
-            num_splits=total_splits_across_gpus,  # <--- Pass the total splits here
+            num_splits=total_splits_across_gpus,
             pvr_keys=pvr_keys,
             nv_keys=pvr_config.non_visual_keys,
             use_dataset_frac=pvr_config.use_dataset_frac,
         )
 
-        # 3. Slice the dataset list so this GPU only gets its assigned chunk
+        # Slice the dataset list so this GPU only gets its assigned chunk
         start_idx = rank * self.config.NUM_ENVIRONMENTS
         end_idx = start_idx + self.config.NUM_ENVIRONMENTS
 
@@ -196,10 +196,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 pvr_dataset,
                 batch_size=batch_size,
                 num_workers=1,
-                prefetch_factor=3,
-                pin_memory=True,  # (Assuming you kept the pin_memory fix!)
+                prefetch_factor=8,
+                pin_memory=True,
             )
-            for pvr_dataset in my_pvr_datasets  # <--- Iterate over the sliced list
+            for pvr_dataset in my_pvr_datasets
         ]
 
         self._pvr_dataloader_iters = [

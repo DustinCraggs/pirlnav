@@ -43,11 +43,11 @@ python -u -m torch.distributed.run \
     WB.MODE online \
     TRAINER_NAME "pvr-pirlnav-il" \
     NUM_ENVIRONMENTS 32 \
-    NUM_UPDATES 52000 \
+    NUM_UPDATES 26000 \
     IL.BehaviorCloning.wd 1e-6 \
     IL.BehaviorCloning.num_steps 64 \
     IL.BehaviorCloning.num_mini_batch 8 \
-    IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
+    IL.BehaviorCloning.num_accumulated_gradient_steps 4 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
@@ -66,6 +66,7 @@ python -u -m torch.distributed.run \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
+    # NUM_UPDATES 52000 \
 
     # 1 GPU:
     # IL.BehaviorCloning.num_steps 64 \

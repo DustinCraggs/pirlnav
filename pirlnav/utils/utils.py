@@ -59,6 +59,12 @@ def load_encoder(encoder, path):
         input_channels = encoder.backbone.conv1.weight.shape[1]
         if input_channels > 3:
             print(f"Expanding backbone.conv1.weight to match {input_channels=}")
+            print(f"Expanding backbone.conv1.weight to match {input_channels=}")
+            print(f"Expanding backbone.conv1.weight to match {input_channels=}")
+            print(f"Expanding backbone.conv1.weight to match {input_channels=}")
+            print(f"Expanding backbone.conv1.weight to match {input_channels=}")
+            print(f"Expanding backbone.conv1.weight to match {input_channels=}")
+            print(f"Expanding backbone.conv1.weight to match {input_channels=}")
             conv1_weight = state_dict["backbone.conv1.weight"]
             input_channels = encoder.backbone.conv1.weight.shape[1]
             num_new_channels = input_channels - 3
