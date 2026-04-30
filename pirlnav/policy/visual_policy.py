@@ -56,6 +56,7 @@ class ObjectNavILMAENet(Net):
             name = rgb_config.augmentations_name
 
         if rgb_config.use_augmentations_test_time and run_type == "eval":
+            print("USING TRAIN AUGMENTATIONS")
             name = rgb_config.augmentations_name
 
         self.visual_transform = get_transform(name, size=rgb_config.image_size)
@@ -122,8 +123,14 @@ class ObjectNavILMAENet(Net):
 
             if self._costmap_names:
 
-                def _costmap_transform(img, interpolation_mode=TF.InterpolationMode.NEAREST_EXACT):
+                def _costmap_transform(
+                    img, interpolation_mode=TF.InterpolationMode.NEAREST_EXACT
+                ):
                     img = img.permute(0, 3, 1, 2)
+                    # if interpolation_mode != TF.InterpolationMode.NEAREST_EXACT:
+                        # TODO: TEMP - only resize if RGB, as there was a bug during
+                        # training where this occurred. The crop will then pad the
+                        # costmap
                     img = TF.resize(
                         img,
                         rgb_config.image_size,
@@ -289,7 +296,9 @@ class ObjectNavILMAENet(Net):
             pvr_embedding = self.pvr_encoder(pvr_tokens, nv_tokens)
             x.append(pvr_embedding)
         elif self.visual_encoder is not None:
+            # DEBUG: Zero-out RGB to force reliance on costmaps
             rgb_obs = observations["rgb"]
+            # rgb_obs = observations["rgb"] * 0
             if self._costmap_names:
                 # Pre-resize the RGB observation to match costmap size:
                 rgb_obs = self._costmap_resize(rgb_obs, TF.InterpolationMode.BILINEAR)
@@ -298,7 +307,9 @@ class ObjectNavILMAENet(Net):
             # transforms in order to apply the same augmentations:
             for costmap_name in self._costmap_names:
                 # orig_shape = observations[costmap_name].shape
-                costmap = self._costmap_resize(observations[costmap_name], TF.InterpolationMode.NEAREST_EXACT)
+                costmap = self._costmap_resize(
+                    observations[costmap_name], TF.InterpolationMode.NEAREST_EXACT
+                )
 
                 # if costmap_name == "goal_costmap":
                 #     # Convert boolean goal_costmap to float (quick hack as the
@@ -390,9 +401,7 @@ class ObjectNavILMAEPolicy(ILPolicy):
         costmap_names = [config.TASK_CONFIG.PVR.pvr_key]
 
         if costmap_names[0] is None:
-            costmap_names = config.POLICY.RGB_ENCODER.get(
-                "costmap_names", []
-            )
+            costmap_names = config.POLICY.RGB_ENCODER.get("costmap_names", [])
 
         return cls(
             observation_space=observation_space,
