@@ -127,10 +127,6 @@ class ObjectNavILMAENet(Net):
                     img, interpolation_mode=TF.InterpolationMode.NEAREST_EXACT
                 ):
                     img = img.permute(0, 3, 1, 2)
-                    # if interpolation_mode != TF.InterpolationMode.NEAREST_EXACT:
-                        # TODO: TEMP - only resize if RGB, as there was a bug during
-                        # training where this occurred. The crop will then pad the
-                        # costmap
                     img = TF.resize(
                         img,
                         rgb_config.image_size,

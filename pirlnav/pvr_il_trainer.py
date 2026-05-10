@@ -207,7 +207,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         ]
 
         # pvr_config = self.config.TASK_CONFIG.PVR
-        
+
         # pvr_keys = pvr_config.pvr_keys
 
         # if pvr_config.pvr_key is not None:
@@ -917,9 +917,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         costmap_names = [config.TASK_CONFIG.PVR.pvr_key]
 
         if costmap_names[0] is None:
-            costmap_names = config.POLICY.RGB_ENCODER.get(
-                "costmap_names", []
-            )
+            costmap_names = config.POLICY.RGB_ENCODER.get("costmap_names", [])
 
         if len(self.config.VIDEO_OPTION) > 0 and self.config.VIDEO_RENDER_TOP_DOWN:
             config.defrost()
@@ -1225,6 +1223,15 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
             if pvr_keys:
                 profiler.enter("generate_pvrs")
+
+                # Identify paused envs dynamically:
+                paused_envs = [
+                    i
+                    for i in range(n_envs)
+                    if (current_episodes[i].scene_id, current_episodes[i].episode_id)
+                    in stats_episodes
+                ]
+
                 # Need to do this after logging, as this is where the current_episodes
                 # are updated:
                 batch = self.add_pvrs_to_batch(
@@ -1237,6 +1244,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                     dones,
                     infos,
                     pvr_keys=pvr_keys,
+                    paused_envs=paused_envs,
                 )
                 profiler.exit("generate_pvrs")
 
@@ -1331,7 +1339,17 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         dones,
         infos,
         pvr_keys,
+        paused_envs=None,
     ):
+        import inspect
+
+        kwargs = {}
+        if (
+            paused_envs is not None
+            and "paused_envs" in inspect.signature(data_generator.generate).parameters
+        ):
+            kwargs["paused_envs"] = paused_envs
+
         # Add PVR to batch:
         pvrs = data_generator.generate(
             current_episodes,
@@ -1342,10 +1360,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             infos,
             self.envs,
             None,
+            **kwargs,
             # return_tensors=True,
         )
         # pvrs = dict(zip(data_generator.data_names, pvrs))
-        
+
         for k in pvr_keys:
             pvr = pvrs[k]
             if isinstance(pvr, list):

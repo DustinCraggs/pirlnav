@@ -616,9 +616,9 @@ class RepresentationGenerator:
 
         # Get available GPU IDs:
         if split_across_gpus:
-            split_across_gpu_ids = list(
-                range(len(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")))
-            )
+            import torch
+
+            split_across_gpu_ids = list(range(torch.cuda.device_count()))
         else:
             split_across_gpu_ids = None
 
@@ -924,7 +924,8 @@ class PredictedDepthGenerator(RawImageGenerator):
             for obs in observations:
                 # Replicate the scaling and permutation used by DepthBasedGeometryUpdater
                 rgb_tensor = (
-                    torch.tensor(obs["rgb"]).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+                    torch.tensor(obs["rgb"]).permute(2, 0, 1).unsqueeze(0).float()
+                    / 255.0
                 )
                 futures.append(self._depth_worker.infer_batched.remote(rgb_tensor))
 
@@ -933,17 +934,18 @@ class PredictedDepthGenerator(RawImageGenerator):
             rgb_tensors = []
             for obs in observations:
                 rgb_tensors.append(
-                    torch.tensor(obs["rgb"]).permute(2, 0, 1).unsqueeze(0).float() / 255.0
+                    torch.tensor(obs["rgb"]).permute(2, 0, 1).unsqueeze(0).float()
+                    / 255.0
                 )
-            
+
             flat_images = torch.cat(rgb_tensors, dim=0)
-            
+
             with torch.inference_mode():
                 result = self._depth_model(flat_images.to(self._device))
-            
+
             depth_tensors = result["metric_depth"].cpu()
-            
-            depths = [depth_tensors[i:i+1] for i in range(len(rgb_tensors))]
+
+            depths = [depth_tensors[i : i + 1] for i in range(len(rgb_tensors))]
 
         depths_np = []
         for depth_tensor in depths:
@@ -1451,17 +1453,36 @@ class GroundTruthPerceptionGraphGenerator:
 
         if self._use_remote_mappers:
             if self._cf_goal_descriptors is not None:
-                for mapper in self._mappers:
-                    mapper.gen_counterfactual_costmaps.remote()
+                for i, mapper in enumerate(self._mappers):
+                    if i not in skip_env_idxs:
+                        mapper.gen_counterfactual_costmaps.remote()
 
             if return_costmaps:
-                costmap_fs = [
-                    self._mappers[i].get_latest_frame_costmaps.remote(
-                        goal_descriptor, return_costdists
-                    )
-                    for i, goal_descriptor in enumerate(goal_descriptors)
-                ]
-                return ray.get(costmap_fs)
+                costmap_fs = []
+                for i, goal_descriptor in enumerate(goal_descriptors):
+                    if i in skip_env_idxs:
+                        costmap_fs.append(None)
+                    else:
+                        costmap_fs.append(
+                            self._mappers[i].get_latest_frame_costmaps.remote(
+                                goal_descriptor, return_costdists
+                            )
+                        )
+
+                results = [ray.get(f) if f is not None else None for f in costmap_fs]
+
+                valid_result = next(r for r in results if r is not None)
+                dummy_cm_dict = {
+                    k: np.zeros_like(v) for k, v in valid_result[0].items()
+                }
+                dummy_dist_dict = (
+                    {k: np.zeros_like(v) for k, v in valid_result[1].items()}
+                    if valid_result[1] is not None
+                    else None
+                )
+                dummy_result = (dummy_cm_dict, dummy_dist_dict)
+
+                return [r if r is not None else dummy_result for r in results]
             # TODO: No need to get the graphs on every step (they are obtained
             # via get_graph in get_final_data now and are not returned from update):
             # self._graphs = [ray.get(f) for f in graph_futures]
@@ -1630,7 +1651,9 @@ class PredictedCostmapImageGenerator:
         envs,
         skipped_last,
         return_tensors=False,
+        paused_envs=None,
     ):
+        paused_envs = paused_envs or []
         if self._use_remote_mappers:
             return self._get_costmap_parallel(
                 ep_metadata,
@@ -1642,6 +1665,7 @@ class PredictedCostmapImageGenerator:
                 envs,
                 skipped_last,
                 return_tensors,
+                paused_envs=paused_envs,
             )
 
         graph_data = self._graph_generator.generate(
@@ -1653,12 +1677,16 @@ class PredictedCostmapImageGenerator:
             infos,
             envs,
             skipped_last,
+            skip_env_idxs=paused_envs,
         )
         graphs = graph_data["gt_perception_graph"]
 
         costmaps = []
 
         for i in range(len(graphs)):
+            if i in paused_envs:
+                costmaps.append(None)
+                continue
             goal = ep_metadata[i].object_category
             mapper = self._graph_generator._mappers[i]
             costmap = self._get_costmap(mapper, graphs[i], goal)
@@ -1667,6 +1695,14 @@ class PredictedCostmapImageGenerator:
                 costmap = self._apply_transforms(costmap)
 
             costmaps.append(costmap)
+
+        valid_cm = next((cm for cm in costmaps if cm is not None), None)
+        if valid_cm is not None:
+            if isinstance(valid_cm, torch.Tensor):
+                dummy_cm = torch.zeros_like(valid_cm)
+            else:
+                dummy_cm = np.zeros_like(valid_cm)
+            costmaps = [cm if cm is not None else dummy_cm for cm in costmaps]
 
         return {"predicted_costmap": costmaps}
 
@@ -1681,7 +1717,9 @@ class PredictedCostmapImageGenerator:
         envs,
         skipped_last,
         return_tensors=False,
+        paused_envs=None,
     ):
+        paused_envs = paused_envs or []
         goal_descriptors = self._get_goal_descriptors(ep_metadata)
 
         results = self._graph_generator.generate(
@@ -1696,6 +1734,7 @@ class PredictedCostmapImageGenerator:
             return_costmaps=True,
             return_costdists=self._generate_costdists,
             goal_descriptors=goal_descriptors,
+            skip_env_idxs=paused_envs,
         )
 
         costmap_dicts = [result[0] for result in results]

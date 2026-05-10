@@ -117,20 +117,18 @@ def create_pvr_dataset_splits(
         ep_index = json.load(f)
 
     dataset = get_pvr_dataset(pvr_dataset_path, nv_dataset_path, pvr_keys, nv_keys)
-    dataset_length = len(dataset)
-
-    orig_length = dataset_length
-
-    # if use_dataset_frac is not None:
-    #     dataset_length = int(dataset_length * use_dataset_frac)
+    orig_length = len(dataset)
 
     # Need to divide dataset into episodes (i.e. episodes should not be broken across
     # multiple splits):
     ep_index = sorted(ep_index, key=lambda ep_info: ep_info["row"])
     ep_boundaries = [*[ep_info["row"] for ep_info in ep_index], orig_length]
 
-    target_split_length = dataset_length // num_splits
-    target_end_rows = [target_split_length * (i + 1) for i in range(num_splits)]
+    # Divide the FULL dataset into splits first to maintain environment diversity
+    target_split_length = orig_length // num_splits
+    target_end_rows = [target_split_length * (i + 1) for i in range(num_splits - 1)] + [
+        orig_length
+    ]
 
     end_rows = [
         ep_boundaries[bisect_left(ep_boundaries, target)] for target in target_end_rows
@@ -138,17 +136,27 @@ def create_pvr_dataset_splits(
 
     datasets = []
     start_row = 0
-    print(f"Total length: {len(dataset)}")
+    print(f"Total length: {orig_length}")
 
     for end_row in end_rows:
-        print(f"start_row {start_row}, end_row {end_row}")
+        # If using a fraction, apply it to the split itself rather than the global dataset
+        if use_dataset_frac is not None:
+            split_target = start_row + int((end_row - start_row) * use_dataset_frac)
+            # Snap to the closest episode boundary
+            split_end_row = ep_boundaries[bisect_left(ep_boundaries, split_target)]
+        else:
+            split_end_row = end_row
+
+        print(
+            f"start_row {start_row}, split_end_row {split_end_row} (original split boundary {end_row})"
+        )
         dataset = get_pvr_dataset(
             pvr_dataset_path,
             nv_dataset_path,
             pvr_keys,
             nv_keys,
             start_idx=start_row,
-            end_idx=end_row,
+            end_idx=split_end_row,
         )
         datasets.append(dataset)
         start_row = end_row
