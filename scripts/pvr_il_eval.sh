@@ -45,7 +45,7 @@ python -u -m run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 4 \
+    POLICY.RGB_ENCODER.input_channels 3 \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     POLICY.RGB_ENCODER.use_augmentations_test_time True \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
