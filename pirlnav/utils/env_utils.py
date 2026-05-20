@@ -27,6 +27,7 @@ def make_env_fn(
         config = config.TASK_CONFIG
     dataset = make_dataset(config.DATASET.TYPE, config=config.DATASET)
 
+    print(f"before {len(dataset.episodes)=}")
     if episode_index is not None:
         dataset.episodes = filter_episodes(dataset.episodes, episode_index)
         print(f"after {len(dataset.episodes)=}")
@@ -98,6 +99,7 @@ def filter_episodes(episodes, episode_index):
     keys = ["scene_id", "episode_id", "object_category"]
     episode_index = set([tuple(ep[k] for k in keys) for ep in episode_index])
     scene_ids = set([ep[0] for ep in episode_index])
+    
     # print([(ep.episode_id, ep.object_category) for ep in episodes if ep.scene_id in scene_ids])
     return [
         ep

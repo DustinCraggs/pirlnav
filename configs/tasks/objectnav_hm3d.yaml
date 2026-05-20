@@ -111,7 +111,7 @@ REPRESENTATION_GENERATOR:
   generate_skip_index: False
   max_num_eps: null
   # max_num_eps: 30
-  split_across_gpus: False
+  split_across_gpus: True
   data_generators:
     # raw_image:
     #   resize_and_crop_to: 256
@@ -125,20 +125,21 @@ REPRESENTATION_GENERATOR:
 
     predicted_costmap:
       cost_predictor_checkpoint_paths: [
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        "/home/dc/data/nav_experiments/cost_predictor/gt_perception_new_20260519_174339/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
       ]
       distributional_cost_predictors: [
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
       ]
-      edge_weight_name: "euclidean_distances.median_distance"
       resize_and_crop_to: 128
     # ground_truth_perception_graph:
+      edge_weight_name: "euclidean_distances.median_distance"
       filter_sim_labels: ["ceiling", "floor", "wall", "unlabeled"]
       max_descriptor_update_image_frac: 0.3
       use_sam21: False
@@ -151,15 +152,16 @@ REPRESENTATION_GENERATOR:
       matching_window_size: 6
       num_kp_threshold: 1
       use_segmaster_matcher: False
-      segmaster_config_path: /home/dc/sg_new/segmast3r/configs/config_eval_spp_resz.yaml
-      segmaster_checkpoint_path: /home/dc/sg_new/segmast3r/checkpoints/segmast3r_spp.ckpt
+      segmaster_config_path: configs/config_eval_spp_resz.yaml
+      segmaster_checkpoint_path: checkpoints/segmast3r_spp.ckpt
       # vis_dir: temp/rollout_vis/test_multi_costmap_fix_infer
       vis_dir: null
-      use_gt_depth: False
-      use_gt_segments: False
+      use_gt_depth: True
+      use_gt_segments: True
+      use_gt_data_association: True
       use_segmaster_geometry: False
       remove_mask_edges: False
-      use_loop_closure: True
+      use_loop_closure: False
       loop_closure_exclusion_window: 16
       loop_closure_top_k: 4
       loop_closure_required_match_count: 8
@@ -198,7 +200,7 @@ REPRESENTATION_GENERATOR:
     name: "zarr"
     # name: "nomad"
     kwargs:
-      batch_chunk_size: 100
+      batch_chunk_size: 1000
 
 
 PVR:
