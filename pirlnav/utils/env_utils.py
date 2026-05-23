@@ -14,6 +14,23 @@ import habitat
 from habitat import Config, Env, RLEnv, VectorEnv, logger, make_dataset
 import numpy as np
 
+# WORKAROUND: Monkeypatch HabitatSimSemanticSensor to avoid OverflowError with int32 dtype and uint32 bounds
+import gym
+import numpy as np
+from habitat.sims.habitat_simulator.habitat_simulator import HabitatSimSemanticSensor
+
+
+def patched_get_observation_space(self, *args, **kwargs):
+    return gym.spaces.Box(
+        low=np.iinfo(np.int32).min,
+        high=np.iinfo(np.int32).max,
+        shape=(self.config.HEIGHT, self.config.WIDTH, 1),
+        dtype=np.int32,
+    )
+
+
+HabitatSimSemanticSensor._get_observation_space = patched_get_observation_space
+
 
 def make_env_fn(
     config: Config,
@@ -96,6 +113,8 @@ def generate_dataset_split_json(
 
 
 def filter_episodes(episodes, episode_index):
+    # TODO: This only works if data is symlinked into pirlnav/
+
     keys = ["scene_id", "episode_id", "object_category"]
     episode_index = set([tuple(ep[k] for k in keys) for ep in episode_index])
     scene_ids = set([ep[0] for ep in episode_index])
