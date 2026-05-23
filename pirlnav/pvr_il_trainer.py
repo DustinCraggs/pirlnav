@@ -196,7 +196,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 pvr_dataset,
                 batch_size=batch_size,
                 num_workers=1,
-                prefetch_factor=8,
+                prefetch_factor=2,
                 pin_memory=True,
             )
             for pvr_dataset in my_pvr_datasets
@@ -485,6 +485,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             resume_state = load_resume_state(self.config)
 
         if resume_state is not None:
+            print("RESUMING FROM CHECKPOINT")
             self.config: Config = resume_state["config"]
 
         if self.config.RL.DDPPO.force_distributed:

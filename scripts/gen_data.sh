@@ -1,6 +1,9 @@
-export GLOG_minloglevel=2
-export MAGNUM_LOG=quiet
-export HABITAT_SIM_LOG=quiet
+# export GLOG_minloglevel=2
+# export MAGNUM_LOG=quiet
+# export HABITAT_SIM_LOG=quiet
+export GLOG_minloglevel=0
+export MAGNUM_LOG=verbose
+export HABITAT_SIM_LOG=verbose
 
 data_dir=$1
 sub_split_path=$2
@@ -19,12 +22,12 @@ python run.py \
     --run-type gen \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $bc_dataset_path \
-    NUM_ENVIRONMENTS 20 \
+    NUM_ENVIRONMENTS 6 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_storage.output_path $output_dir \
     TASK_CONFIG.REPRESENTATION_GENERATOR.skip_look_actions False \
     TASK_CONFIG.REPRESENTATION_GENERATOR.generate_skip_index False \
-    TASK_CONFIG.DATASET.FILTER_EXISTING_PATH $filter_existing_path \
+    # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH $filter_existing_path \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH completed_eps_splits/edge_fix_running_splits/completed_eps_1.txt \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH split_0_work_splits/completed_eps_1.txt \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0/costmap_costdist_zarr_edge_fix/completed_eps.txt \

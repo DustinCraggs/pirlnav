@@ -19,7 +19,7 @@ NUM_CHECKPOINTS: 10
 # Force PyTorch to be single threaded as
 # this improves performance considerably
 FORCE_TORCH_SINGLE_THREADED: True
-RESUME_RUN: False
+RESUME_RUN: True
 
 EVAL:
   SPLIT: "val"

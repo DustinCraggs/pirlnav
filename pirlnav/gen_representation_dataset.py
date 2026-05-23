@@ -689,6 +689,15 @@ class RepresentationGenerator:
 
         pbar = tqdm.tqdm(total=total_num_eps, smoothing=0)
         while self._remaining_ep_set:
+            # TODO: Temp RAM usage reporting
+
+            import psutil
+
+            ram = psutil.virtual_memory()
+            print(f"Total RAM: {ram.total / (1024**3):.2f} GB")
+            print(f"Used RAM: {ram.used / (1024**3):.2f} GB")
+            print(f"RAM Usage Percentage: {ram.percent}%")
+
             # "next_actions" contains the actions from the BC dataset:
             actions = [o["next_actions"] for o in observations]
 
