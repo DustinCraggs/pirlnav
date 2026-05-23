@@ -125,15 +125,42 @@ REPRESENTATION_GENERATOR:
 
     predicted_costmap:
       cost_predictor_checkpoint_paths: [
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
+        "cost_predictors/round2/all_labels_objectnav_mse_scalar_bias_2_20260511_201404/epoch_19.pth",
+        "cost_predictors/round2/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
+        "cost_predictors/round2/objectnav_c51_db_metric_20260518_200932/epoch_19.pth",
+        "cost_predictors/round2/objectnav_c51_sb_wass_20260518_204834/epoch_19.pth",
+        "cost_predictors/round2/objectnav_mse_sb_metric_20260518_204834/epoch_19.pth",
+        "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
+        "cost_predictors/round2/smacof_objectnav_mse_scalar_bias_20260511_191511/epoch_19.pth",
+        "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
+        "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_mse_scalar_bias_2_20260511_202040/epoch_19.pth",
+        # "../data/cost_predictors/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
       ]
       distributional_cost_predictors: [
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
+        "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
+        "cost_predictors/round2/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
+        "cost_predictors/round2/objectnav_c51_db_metric_20260518_200932/epoch_19.pth",
+        "cost_predictors/round2/objectnav_c51_sb_wass_20260518_204834/epoch_19.pth",
+        "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
+        "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
+        "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
+        "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
+        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
       ]
       edge_weight_name: "euclidean_distances.median_distance"
@@ -145,7 +172,8 @@ REPRESENTATION_GENERATOR:
       image_width: 640
       image_height: 480
       hfov: 79
-      segmentor_model_path: /home/dc/sg_new/sg_habitat/libs/models/FastSAM-s.pt
+      segmentor_model_path: /hpcfs/users/a1667442/nav/sg_habitat/libs/models/FastSAM-s.pt
+      # segmentor_model_path: /home/dc/sg_new/sg_habitat/libs/models/FastSAM-s.pt
       use_remote_mappers: True
       use_inf_mapping: True
       matching_window_size: 6

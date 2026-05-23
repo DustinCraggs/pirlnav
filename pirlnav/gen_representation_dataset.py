@@ -39,7 +39,6 @@ from habitat.core.registry import registry
 from scipy.spatial.transform import Rotation
 from PIL import Image
 
-
 # TODO: Temporary hack as these are not accessible as installable packages:
 # sys.path.append("/storage/dc/sg/sg_habitat")
 # sys.path.append("/home/dc/sg_new/sg_habitat")
@@ -672,6 +671,15 @@ class RepresentationGenerator:
 
         pbar = tqdm.tqdm(total=total_num_eps, smoothing=0)
         while self._remaining_ep_set:
+            # TODO: Temp RAM usage reporting
+
+            import psutil
+
+            ram = psutil.virtual_memory()
+            print(f"Total RAM: {ram.total / (1024**3):.2f} GB")
+            print(f"Used RAM: {ram.used / (1024**3):.2f} GB")
+            print(f"RAM Usage Percentage: {ram.percent}%")
+
             # "next_actions" contains the actions from the BC dataset:
             actions = [o["next_actions"] for o in observations]
 
@@ -1298,8 +1306,19 @@ class GroundTruthPerceptionGraphGenerator:
                     )
 
                     _, config = load_checkpoint(path)
-                    node_attributes = config["dataset"]["observation_attributes"]
-                    edge_weight_name = config["dataset"]["edge_weight_name"]
+                    if "dataset" in config:
+                        # Legacy configuration:
+                        node_attributes = config["dataset"]["observation_attributes"]
+                        edge_weight_name = config["dataset"]["edge_weight_name"]
+                    else:
+                        # TODO: If using CF visual goals, do we need to look for where
+                        # the goal key is set?
+                        node_attributes = config["dataset_defaults"][
+                            "observation_attributes"
+                        ]
+                        edge_weight_name = config["dataset_defaults"][
+                            "edge_weight_name"
+                        ]
 
                     cost_predictors[label] = CostPredictor(
                         cost_predictor_worker,

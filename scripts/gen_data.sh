@@ -1,26 +1,32 @@
-export GLOG_minloglevel=2
-export MAGNUM_LOG=quiet
-export HABITAT_SIM_LOG=quiet
+# export GLOG_minloglevel=2
+# export MAGNUM_LOG=quiet
+# export HABITAT_SIM_LOG=quiet
+export GLOG_minloglevel=0
+export MAGNUM_LOG=verbose
+export HABITAT_SIM_LOG=verbose
 
 data_dir=$1
 sub_split_path=$2
 output_dir=$3
+filter_existing=$4
 clip_model_path=None
 # clip_model_path="/data/drive2/models/clip-vit-base-patch32"
 # cogvlm2_model_path="/storage/dc/models/vlm/cogvlm2-llama3-chat-19B-int4/"
 
 bc_dataset_path="$data_dir/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd/{split}/{split}.json.gz"
 
+# HABITAT_ENV_DEBUG=1 
 python run.py \
     --run-type gen \
     --exp-config configs/experiments/il_objectnav.yaml \
     TASK_CONFIG.DATASET.DATA_PATH $bc_dataset_path \
-    NUM_ENVIRONMENTS 10 \
+    NUM_ENVIRONMENTS 6 \
     TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH $sub_split_path \
     TASK_CONFIG.REPRESENTATION_GENERATOR.data_storage.output_path $output_dir \
     TASK_CONFIG.REPRESENTATION_GENERATOR.skip_look_actions False \
     TASK_CONFIG.REPRESENTATION_GENERATOR.generate_skip_index False \
-    TASK_CONFIG.DATASET.FILTER_EXISTING_PATH split_0_work_splits/completed_eps_1.txt \
+    # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH $filter_existing \
+    # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH split_0_work_splits/completed_eps_1.txt \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0/costmap_costdist_zarr_edge_fix/completed_eps.txt \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0/costmap_zarr/segmaster_1_1_20260102_165219_epoch_149/completed_eps.txt \
     # TASK_CONFIG.DATASET.FILTER_EXISTING_PATH /storage/dc/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0/pred_costmaps/splg_full_costmaps_1_2/completed_eps.txt \

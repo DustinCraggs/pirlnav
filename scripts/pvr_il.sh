@@ -13,10 +13,14 @@ PVR_KEY=$4
 COSTMAP_CHANNELS=$5
 EXP_NAME=$6
 GROUP_NAME=$7
+N_PROC_PER_NODE=$8
+DATASET_FRAC=$9
+INPUT_CHANNELS=${10}
 
 DATA_PATH="$DATA_DIR/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 TENSORBOARD_DIR="$DATA_DIR/tb/objectnav_il/$EXP_NAME/"
-CHECKPOINT_DIR="$DATA_DIR/checkpoints/objectnav_il/$EXP_NAME/$(date "+%Y_%m_%d_%H_%M_%S")"
+CHECKPOINT_DIR="$DATA_DIR/checkpoints/objectnav_il/$EXP_NAME"
+# CHECKPOINT_DIR="$DATA_DIR/checkpoints/objectnav_il/$EXP_NAME/$(date "+%Y_%m_%d_%H_%M_%S")"
 INFLECTION_COEF=3.234951275740812
 
 mkdir -p $TENSORBOARD_DIR
@@ -31,7 +35,7 @@ echo "In ObjectNav IL DDP"
 # --nnodes 1 \
 python -u -m torch.distributed.run \
     --master_port 29504 \
-    --nproc_per_node 1 \
+    --nproc_per_node $N_PROC_PER_NODE \
     run.py \
     --exp-config $config \
     --run-type train \
@@ -40,7 +44,7 @@ python -u -m torch.distributed.run \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
     WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
-    WB.MODE online \
+    WB.MODE offline \
     TRAINER_NAME "pvr-pirlnav-il" \
     NUM_ENVIRONMENTS 32 \
     NUM_UPDATES 26000 \
@@ -57,13 +61,14 @@ python -u -m torch.distributed.run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 3 \
+    POLICY.RGB_ENCODER.input_channels $INPUT_CHANNELS \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     NUM_CHECKPOINTS -1 \
     CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
+    TASK_CONFIG.PVR.use_dataset_frac $DATASET_FRAC \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
     # NUM_UPDATES 52000 \
