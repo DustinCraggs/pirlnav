@@ -1176,6 +1176,7 @@ class GroundTruthPerceptionGraphGenerator:
         vis_dir=None,
         use_gt_depth=False,
         use_gt_segments=False,
+        use_gt_data_association=False,
         use_segmaster_geometry=False,
         remove_mask_edges=False,
         use_loop_closure=False,
@@ -1262,14 +1263,17 @@ class GroundTruthPerceptionGraphGenerator:
 
             self._use_remote_mappers = True
 
-            segmentor = get_fastsam_segmentor_deployment(
-                segmentor_model_path,
-                image_width,
-                image_height,
-                conf=0.5,
-                use_sam21=use_sam21,
-                seed=seed,
-            )
+            if not use_gt_segments:
+                segmentor = get_fastsam_segmentor_deployment(
+                    segmentor_model_path,
+                    image_width,
+                    image_height,
+                    conf=0.5,
+                    use_sam21=use_sam21,
+                    seed=seed,
+                )
+            else:
+                segmentor = None
             clip_worker = get_clip_worker(seed=seed)
 
             depth_model_name = "zoedepth"
@@ -1279,17 +1283,21 @@ class GroundTruthPerceptionGraphGenerator:
 
             # Create this deployment last, as it is the heaviest and will reserve all
             # of GPU0:
-            if use_segmaster_matcher:
-                matcher_worker = get_segmaster_matcher_deployment(
-                    segmaster_config_path,
-                    segmaster_checkpoint_path,
-                    get_geometry=use_segmaster_geometry,
-                    seed=seed,
-                )
-            else:
-                splg_worker = get_splg_matcher_deployment(seed=seed)
+            matcher_worker = None
+            splg_worker = None
+            if not use_gt_data_association or use_segmaster_geometry:
+                if use_segmaster_matcher:
+                    matcher_worker = get_segmaster_matcher_deployment(
+                        segmaster_config_path,
+                        segmaster_checkpoint_path,
+                        get_geometry=use_segmaster_geometry,
+                        seed=seed,
+                    )
+                else:
+                    splg_worker = get_splg_matcher_deployment(seed=seed)
 
-            if not use_segmaster_geometry:
+            depth_worker = None
+            if not use_gt_depth and not use_segmaster_geometry:
                 depth_worker = get_depth_worker(
                     depth_model_name, depth_model_path, seed=seed
                 )
@@ -1333,19 +1341,22 @@ class GroundTruthPerceptionGraphGenerator:
 
             for i in range(num_envs):
                 descriptor_generator = get_descriptor_generator(clip_worker)
-                if use_segmaster_matcher:
-                    matcher = SegmasterMatcher(
-                        matcher_worker,
-                        get_geometry=use_segmaster_geometry,
-                        img_width=image_width,
-                        img_height=image_height,
-                        hfov=hfov,
-                        reproject_depth=False,
-                    )
+                if not use_gt_data_association or use_segmaster_geometry:
+                    if use_segmaster_matcher:
+                        matcher = SegmasterMatcher(
+                            matcher_worker,
+                            get_geometry=use_segmaster_geometry,
+                            img_width=image_width,
+                            img_height=image_height,
+                            hfov=hfov,
+                            reproject_depth=False,
+                        )
+                    else:
+                        matcher = LightGlueMatcher(
+                            splg_worker, num_kp_threshold=num_kp_threshold
+                        )
                 else:
-                    matcher = LightGlueMatcher(
-                        splg_worker, num_kp_threshold=num_kp_threshold
-                    )
+                    matcher = None
 
                 if use_segmaster_geometry:
                     geometry_updater = None
@@ -1372,6 +1383,7 @@ class GroundTruthPerceptionGraphGenerator:
                     add_matching_sim_segments=False,
                     use_gt_depth=use_gt_depth,
                     use_gt_segments=use_gt_segments,
+                    use_gt_data_association=use_gt_data_association,
                     use_matcher_geometry=use_segmaster_geometry,
                     remove_mask_edges=remove_mask_edges,
                     use_loop_closure=use_loop_closure,
