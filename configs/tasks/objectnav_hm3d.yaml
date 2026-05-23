@@ -156,9 +156,6 @@ REPRESENTATION_GENERATOR:
       segmaster_checkpoint_path: checkpoints/segmast3r_spp.ckpt
       # vis_dir: temp/rollout_vis/test_multi_costmap_fix_infer
       vis_dir: null
-      use_gt_depth: True
-      use_gt_segments: True
-      use_gt_data_association: True
       use_segmaster_geometry: False
       remove_mask_edges: False
       use_loop_closure: False
@@ -166,6 +163,9 @@ REPRESENTATION_GENERATOR:
       loop_closure_top_k: 4
       loop_closure_required_match_count: 8
       use_observed_node_data: True
+      use_gt_depth: True
+      use_gt_segments: True
+      use_gt_data_association: True
 
     # costmap_visualisation:
     #   cost_predictor_checkpoint_paths: ["/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_999.pth"]
