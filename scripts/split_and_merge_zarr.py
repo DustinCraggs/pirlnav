@@ -184,70 +184,80 @@ def merge(
     missing_episodes = []
     zero_data_episodes = []
 
-    # Batch merging by buffering contiguous episodes in memory before writing to disk:
-    batch_size = 200
+    # Pre-resolve which machine completed which episode to run this check only once
+    episode_owners = {}
+    for ep in episodes:
+        scene_id = ep["scene_id"].split("/")[-2]
+        ep_id = f"{scene_id}_{ep['episode_id']}_{ep['object_category']}"
+        
+        owner = None
+        for i, machine_completed in enumerate(machine_completed_eps):
+            if ep_id in machine_completed:
+                if owner is not None:
+                    print(
+                        f"Warning: episode {ep_id} completed by multiple machines"
+                        f" ({owner} and {i}). Using {owner}."
+                    )
+                else:
+                    owner = i
+                    
+        if owner is None:
+            missing_episodes.append(ep_id)
+            print(f"Warning: episode {ep_id} not completed by any machine.")
+        else:
+            episode_owners[ep_id] = owner
+
+    # Safe batch size to keep the memory footprint very low (max ~3.17 GB RAM per key batch)
+    batch_size = 5
     num_episodes = len(episodes)
 
-    # Use tqdm to show progress by batch
-    with tqdm(total=num_episodes, desc="Merging episodes (batched)") as pbar:
-        for batch_idx in range(0, num_episodes, batch_size):
-            batch_eps = episodes[batch_idx : batch_idx + batch_size]
-            
-            # Determine contiguous rows range for this entire batch
-            first_ep = batch_eps[0]
-            last_ep = batch_eps[-1]
-            
-            first_scene = first_ep["scene_id"].split("/")[-2]
-            first_row, _ = episode_index[
-                (first_scene, str(first_ep["episode_id"]), first_ep["object_category"])
-            ]
-            
-            last_scene = last_ep["scene_id"].split("/")[-2]
-            last_row, last_len = episode_index[
-                (last_scene, str(last_ep["episode_id"]), last_ep["object_category"])
-            ]
-            
-            batch_start_row = first_row
-            batch_end_row = last_row + last_len
-            batch_total_rows = batch_end_row - batch_start_row
-            
-            # Initialize in-memory numpy buffers for each dataset key
-            buffers = {}
-            for key in keys:
-                ds_shape = valid_zarr[key].shape
-                ds_dtype = valid_zarr[key].dtype
-                buffers[key] = np.zeros((batch_total_rows, *ds_shape[1:]), dtype=ds_dtype)
+    # Merge key by key to keep the memory footprint extremely low (under 4GB total RAM)
+    for key_idx, key in enumerate(keys):
+        ds_shape = valid_zarr[key].shape
+        ds_dtype = valid_zarr[key].dtype
+        
+        desc = f"Merging key '{key}' ({key_idx + 1}/{len(keys)})"
+        with tqdm(total=num_episodes, desc=desc, smoothing=0) as pbar:
+            for batch_idx in range(0, num_episodes, batch_size):
+                batch_eps = episodes[batch_idx : batch_idx + batch_size]
                 
-            # Populate the in-memory buffers
-            for ep in batch_eps:
-                scene_id = ep["scene_id"].split("/")[-2]
-                ep_id = f"{scene_id}_{ep['episode_id']}_{ep['object_category']}"
+                # Determine contiguous rows range for this entire batch
+                first_ep = batch_eps[0]
+                last_ep = batch_eps[-1]
                 
-                # Find which machine completed this episode
-                owner = None
-                for i, machine_completed in enumerate(machine_completed_eps):
-                    if ep_id in machine_completed:
-                        if owner is not None:
-                            print(
-                                f"Warning: episode {ep_id} completed by multiple machines"
-                                f" ({owner} and {i}). Using {owner}."
-                            )
-                        else:
-                            owner = i
-                            
-                if owner is None:
-                    missing_episodes.append(ep_id)
-                    print(f"Warning: episode {ep_id} not completed by any machine.")
-                    continue
-                    
-                row, length = episode_index[
-                    (scene_id, str(ep["episode_id"]), ep["object_category"])
+                first_scene = first_ep["scene_id"].split("/")[-2]
+                first_row, _ = episode_index[
+                    (first_scene, str(first_ep["episode_id"]), first_ep["object_category"])
                 ]
                 
-                rel_start = row - batch_start_row
-                rel_end = rel_start + length
+                last_scene = last_ep["scene_id"].split("/")[-2]
+                last_row, last_len = episode_index[
+                    (last_scene, str(last_ep["episode_id"]), last_ep["object_category"])
+                ]
                 
-                for key in keys:
+                batch_start_row = first_row
+                batch_end_row = last_row + last_len
+                batch_total_rows = batch_end_row - batch_start_row
+                
+                # Initialize in-memory buffer for this single key batch
+                buffer = np.zeros((batch_total_rows, *ds_shape[1:]), dtype=ds_dtype)
+                
+                # Populate the buffer
+                for ep in batch_eps:
+                    scene_id = ep["scene_id"].split("/")[-2]
+                    ep_id = f"{scene_id}_{ep['episode_id']}_{ep['object_category']}"
+                    
+                    if ep_id not in episode_owners:
+                        continue
+                        
+                    owner = episode_owners[ep_id]
+                    row, length = episode_index[
+                        (scene_id, str(ep["episode_id"]), ep["object_category"])
+                    ]
+                    
+                    rel_start = row - batch_start_row
+                    rel_end = rel_start + length
+                    
                     if machine_zarrs[owner] is None:
                         raise ValueError(
                             f"Machine {owner} completed episode {ep_id} but its zarr array is "
@@ -264,13 +274,15 @@ def merge(
                             f" is all zeros. This may indicate missing data."
                         )
                         
-                    buffers[key][rel_start:rel_end] = data_slice
+                    buffer[rel_start:rel_end] = data_slice
                     
-            # Write the entire batch buffer to disk in a single write operation per key
-            for key in keys:
-                out_data[key][batch_start_row:batch_end_row] = buffers[key]
+                # Write the single key batch buffer to disk in a single write operation
+                out_data[key][batch_start_row:batch_end_row] = buffer
+                pbar.update(len(batch_eps))
                 
-            pbar.update(len(batch_eps))
+        # Clean up RAM after each key is fully merged
+        import gc
+        gc.collect()
 
     if missing_episodes or zero_data_episodes:
         error_msg = "Merging failed due to missing or corrupted data.\n"
