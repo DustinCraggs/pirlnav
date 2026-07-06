@@ -659,8 +659,26 @@ class RepresentationGenerator:
         # Track the episode info to deduplicate episodes from cycling environments:
         current_episodes = self._envs.current_episodes()
 
+        paused_envs = [
+            i
+            for i in range(self._num_envs)
+            if (
+                current_episodes[i].scene_id,
+                current_episodes[i].episode_id,
+                current_episodes[i].object_category,
+            )
+            not in self._remaining_ep_set
+        ]
+
         step_data = self._generate_step(
-            current_episodes, actions, observations, rewards, dones, None, should_skips
+            current_episodes,
+            actions,
+            observations,
+            rewards,
+            dones,
+            None,
+            should_skips,
+            paused_envs=paused_envs,
         )
         for ep, data in zip(rollout_data, step_data):
             ep.append(data)
@@ -671,15 +689,6 @@ class RepresentationGenerator:
 
         pbar = tqdm.tqdm(total=total_num_eps, smoothing=0)
         while self._remaining_ep_set:
-            # TODO: Temp RAM usage reporting
-
-            import psutil
-
-            ram = psutil.virtual_memory()
-            print(f"Total RAM: {ram.total / (1024**3):.2f} GB")
-            print(f"Used RAM: {ram.used / (1024**3):.2f} GB")
-            print(f"RAM Usage Percentage: {ram.percent}%")
-
             # "next_actions" contains the actions from the BC dataset:
             actions = [o["next_actions"] for o in observations]
 
@@ -739,6 +748,17 @@ class RepresentationGenerator:
             ):
                 break
 
+            paused_envs = [
+                i
+                for i in range(self._num_envs)
+                if (
+                    current_episodes[i].scene_id,
+                    current_episodes[i].episode_id,
+                    current_episodes[i].object_category,
+                )
+                not in self._remaining_ep_set
+            ]
+
             step_data = self._generate_step(
                 current_episodes,
                 actions,
@@ -747,6 +767,7 @@ class RepresentationGenerator:
                 dones,
                 infos,
                 should_skips,
+                paused_envs=paused_envs,
             )
 
             for ep, data, should_skip in zip(rollout_data, step_data, should_skips):
@@ -779,7 +800,15 @@ class RepresentationGenerator:
         self._data_storage.close()
 
     def _generate_step(
-        self, ep_metadata, actions, observations, rewards, dones, infos, skipped_last
+        self,
+        ep_metadata,
+        actions,
+        observations,
+        rewards,
+        dones,
+        infos,
+        skipped_last,
+        paused_envs=None,
     ):
         data = {}
         for data_generator in self._data_generators:
@@ -792,6 +821,7 @@ class RepresentationGenerator:
                 infos,
                 self._envs,
                 skipped_last,
+                paused_envs=paused_envs,
             )
             data.update(output)
 
