@@ -42,7 +42,7 @@ from PIL import Image
 # TODO: Temporary hack as these are not accessible as installable packages:
 # sys.path.append("/storage/dc/sg/sg_habitat")
 # sys.path.append("/home/dc/sg_new/sg_habitat")
-sys.path.append(os.environ.get("SG_HABITAT_PATH"))
+# sys.path.append(os.environ.get("SG_HABITAT_PATH"))
 
 from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
 from libs.mapper.parallel_mapper import (
