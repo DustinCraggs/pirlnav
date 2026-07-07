@@ -206,52 +206,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             iter(self._pvr_dataloader) for self._pvr_dataloader in pvr_dataloaders
         ]
 
-        # pvr_config = self.config.TASK_CONFIG.PVR
-
-        # pvr_keys = pvr_config.pvr_keys
-
-        # if pvr_config.pvr_key is not None:
-        #     pvr_keys.append(pvr_config.pvr_key)
-
-        # pvr_datasets = create_pvr_dataset_splits(
-        #     pvr_config.pvr_data_path,
-        #     pvr_config.non_visual_obs_data_path,
-        #     num_splits=self.config.NUM_ENVIRONMENTS,
-        #     pvr_keys=pvr_keys,
-        #     nv_keys=pvr_config.non_visual_keys,
-        #     use_dataset_frac=pvr_config.use_dataset_frac,
-        # )
-        # # TODO: We need to shuffle the dataset in advance (and store on disk).
-        # batch_size = self.config.IL.BehaviorCloning.num_steps
-        # pvr_dataloaders = [
-        #     DataLoader(
-        #         pvr_dataset,
-        #         batch_size=batch_size,
-        #         num_workers=1,
-        #         prefetch_factor=3,
-        #     )
-        #     for pvr_dataset in pvr_datasets
-        # ]
-        # self._pvr_dataloader_iters = [
-        #     iter(self._pvr_dataloader) for self._pvr_dataloader in pvr_dataloaders
-        # ]
-
         example_batch = next(iter(pvr_dataloaders[0]))
-
-        # pvr_dataset = get_fast_zarr_dataset(
-        #     pvr_config.pvr_data_path,
-        #     pvr_config.non_visual_obs_data_path,
-        #     sequence_length=self.config.IL.BehaviorCloning.num_steps,
-        #     pvr_keys=pvr_keys,
-        #     nv_keys=pvr_config.non_visual_keys,
-        # )
-
-        # self._dataloader = DataLoader(
-        #     pvr_dataset, batch_size=self.config.NUM_ENVIRONMENTS, num_workers=8
-        # )
-        # self._dataloader_iter = iter(self._dataloader)
-
-        # example_batch = next(iter(self._dataloader))
 
         visual_keys = [*pvr_config.pvr_keys, "rgb"]
         # pvr_shapes = {k: example_batch[k][0].shape for k in visual_keys}

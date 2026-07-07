@@ -11,7 +11,7 @@ import cv2
 import einops
 import numcodecs
 import numpy as np
-import ray
+# import ray
 import torch
 import torchvision
 import zarr
@@ -44,26 +44,26 @@ from PIL import Image
 # sys.path.append("/home/dc/sg_new/sg_habitat")
 # sys.path.append(os.environ.get("SG_HABITAT_PATH"))
 
-from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
-from libs.mapper.parallel_mapper import (
-    SimIncrementalMapper as RemoteSimIncrementalMapper,
-    IncrementalMapper as RemoteIncrementalMapper,
-    DepthBasedGeometryUpdater,
-    get_clip_worker,
-    get_depth_worker,
-    get_fastsam_segmentor_deployment,
-    get_splg_matcher_deployment,
-    get_segmaster_matcher_deployment,
-    LightGlueMatcher,
-    SegmasterMatcher,
-    get_descriptor_generator,
-    get_cost_predictor_worker,
-    CostPredictor,
-)
-from scripts.exploration.models import load_checkpoint
-from scripts.exploration.graph_dataset import get_cost_matrix, get_objectnav_cost_matrix
-from scripts.exploration.descriptor_generator import ClipDescriptorGenerator
-from libs.planner_global.plan_topo import predict_path_lengths
+# from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
+# from libs.mapper.parallel_mapper import (
+#     SimIncrementalMapper as RemoteSimIncrementalMapper,
+#     IncrementalMapper as RemoteIncrementalMapper,
+#     DepthBasedGeometryUpdater,
+#     get_clip_worker,
+#     get_depth_worker,
+#     get_fastsam_segmentor_deployment,
+#     get_splg_matcher_deployment,
+#     get_segmaster_matcher_deployment,
+#     LightGlueMatcher,
+#     SegmasterMatcher,
+#     get_descriptor_generator,
+#     get_cost_predictor_worker,
+#     CostPredictor,
+# )
+# from scripts.exploration.models import load_checkpoint
+# from scripts.exploration.graph_dataset import get_cost_matrix, get_objectnav_cost_matrix
+# from scripts.exploration.descriptor_generator import ClipDescriptorGenerator
+# from libs.planner_global.plan_topo import predict_path_lengths
 
 # from libs.experiments import model_loader
 # from libs.matcher import lightglue as matcher_lg
@@ -107,7 +107,7 @@ def get_data_generators(config, num_envs, seed=None):
         "clip": ClipGenerator,
         "vc_1": Vc1Generator,
         "cogvlm2": CogVlmGenerator,
-        "agent_state": AgentStateGenerator,
+        # "agent_state": AgentStateGenerator,
         "predicted_depth": PredictedDepthGenerator,
     }
 
@@ -888,6 +888,7 @@ class RawImageGenerator:
         infos,
         envs,
         skipped_last,
+        paused_envs=None,
     ):
         images = [o["rgb"] for o in observations]
 
@@ -956,6 +957,7 @@ class PredictedDepthGenerator(RawImageGenerator):
         infos,
         envs,
         skipped_last,
+        paused_envs=None,
     ):
         if self._use_remote_mappers:
             futures = []
@@ -2460,6 +2462,7 @@ class NonVisualObservationsGenerator:
         infos,
         envs,
         skipped_last,
+        paused_envs=None,
     ):
         data = {k: [obs[k] for obs in observations] for k in self._obs_keys}
         data["reward"] = rewards
@@ -2476,66 +2479,66 @@ class HabitatSimActions(Enum):
     LOOK_DOWN = 5
 
 
-class AgentStateGenerator:
+# class AgentStateGenerator:
 
-    def __init__(self, remove_non_movement_actions=True, **kwargs):
-        """
-        remove_non_movement_actions: If True, remove non-movement actions from the
-        dataset (except stop action) by returning None.
-        """
-        self.data_names = ["agent_state", "position", "yaw"]
+#     def __init__(self, remove_non_movement_actions=True, **kwargs):
+#         """
+#         remove_non_movement_actions: If True, remove non-movement actions from the
+#         dataset (except stop action) by returning None.
+#         """
+#         self.data_names = ["agent_state", "position", "yaw"]
 
-        self.remove_non_movement_actions = remove_non_movement_actions
-        # Track the previous output positions. These are different to the sim agent
-        # states, as rotations are only converted to small movements for the output
-        # positions:
-        self.prev_output_positions = None
+#         self.remove_non_movement_actions = remove_non_movement_actions
+#         # Track the previous output positions. These are different to the sim agent
+#         # states, as rotations are only converted to small movements for the output
+#         # positions:
+#         self.prev_output_positions = None
 
-    def generate(
-        self,
-        ep_metadata,
-        prev_actions,
-        observations,
-        rewards,
-        dones,
-        infos,
-        envs,
-        skipped_last,
-    ):
-        num_envs = len(observations)
-        agent_states = [envs.call_sim_at(i, "get_agent_state") for i in range(num_envs)]
+#     def generate(
+#         self,
+#         ep_metadata,
+#         prev_actions,
+#         observations,
+#         rewards,
+#         dones,
+#         infos,
+#         envs,
+#         skipped_last,
+#     ):
+#         num_envs = len(observations)
+#         agent_states = [envs.call_sim_at(i, "get_agent_state") for i in range(num_envs)]
 
-        positions, yaws = zip(*[state_to_traj_sample(state) for state in agent_states])
-        positions = [np.array(pos) for pos in positions]
-        yaws = list(yaws)
+#         positions, yaws = zip(*[state_to_traj_sample(state) for state in agent_states])
+#         positions = [np.array(pos) for pos in positions]
+#         yaws = list(yaws)
 
-        if self.prev_output_positions is None:
-            self.prev_output_positions = positions
+#         if self.prev_output_positions is None:
+#             self.prev_output_positions = positions
 
-        prev_actions = [
-            HabitatSimActions(a) if a is not None else None for a in prev_actions
-        ]
+#         prev_actions = [
+#             HabitatSimActions(a) if a is not None else None for a in prev_actions
+#         ]
 
-        for i in range(num_envs):
-            positions[i] = convert_rotation_to_small_movement(
-                dones[i],
-                prev_actions[i],
-                self.prev_output_positions[i],
-                positions[i],
-                yaws[i],
-            )
+#         for i in range(num_envs):
+#             positions[i] = convert_rotation_to_small_movement(
+#                 dones[i],
+#                 prev_actions[i],
+#                 self.prev_output_positions[i],
+#                 positions[i],
+#                 yaws[i],
+#             )
 
-        # self.prev_output_positions = list(positions)
-        self.prev_output_positions = [
-            positions[i] if not skipped_last[i] else self.prev_output_positions[i]
-            for i in range(num_envs)
-        ]
+#         # self.prev_output_positions = list(positions)
+#         self.prev_output_positions = [
+#             positions[i] if not skipped_last[i] else self.prev_output_positions[i]
+#             for i in range(num_envs)
+#         ]
 
-        return {
-            "agent_state": agent_states,
-            "position": positions,
-            "yaw": yaws,
-        }
+#         return {
+#             "agent_state": agent_states,
+#             "position": positions,
+#             "yaw": yaws,
+#         }
 
 
 def batched(iterable, batch_size):
@@ -2643,36 +2646,36 @@ def hs_quat_to_array(q):
     return np.array(mn_mat)
 
 
-from spatialmath import SE3
-from spatialmath.base import trnorm
+# from spatialmath import SE3
+# from spatialmath.base import trnorm
 
 
-def SE3_from4x4(pose):
-    # check is False, do see https://github.com/bdaiinstitute/spatialmath-python/issues/28
-    # return SE3.Rt(pose[:3,:3], pose[:3,-1],check=False)
-    # if pose is instance list of R (3x3),t(3), conver tto pose
-    if isinstance(pose, list) and len(pose) == 2:
-        pose4x4 = np.eye(4)
-        R, t = pose
-        pose4x4[:3, :3] = R
-        pose4x4[:3, -1] = t.flatten()
-        pose = pose4x4
-    return SE3(trnorm(np.array(pose)))
+# def SE3_from4x4(pose):
+#     # check is False, do see https://github.com/bdaiinstitute/spatialmath-python/issues/28
+#     # return SE3.Rt(pose[:3,:3], pose[:3,-1],check=False)
+#     # if pose is instance list of R (3x3),t(3), conver tto pose
+#     if isinstance(pose, list) and len(pose) == 2:
+#         pose4x4 = np.eye(4)
+#         R, t = pose
+#         pose4x4[:3, :3] = R
+#         pose4x4[:3, -1] = t.flatten()
+#         pose = pose4x4
+#     return SE3(trnorm(np.array(pose)))
 
 
-def state_to_traj_sample(state):
-    # states are T_wb (world to base), convert that to camera
-    T_bc = np.array(
-        [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
-    )  # camera to base
-    R = hs_quat_to_array(state.rotation)
-    t = state.position
+# def state_to_traj_sample(state):
+#     # states are T_wb (world to base), convert that to camera
+#     T_bc = np.array(
+#         [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+#     )  # camera to base
+#     R = hs_quat_to_array(state.rotation)
+#     t = state.position
 
-    pose = SE3_from4x4([R, t]) @ SE3(T_bc)
-    yaw = np.arctan2(pose.R[0, 2], pose.R[2, 2])
-    # yaws = np.array([np.arctan2(Ri[0,2], Ri[2,2]) for Ri in Rs])
-    position = t[[2, 0]]
-    return position, yaw
+#     pose = SE3_from4x4([R, t]) @ SE3(T_bc)
+#     yaw = np.arctan2(pose.R[0, 2], pose.R[2, 2])
+#     # yaws = np.array([np.arctan2(Ri[0,2], Ri[2,2]) for Ri in Rs])
+#     position = t[[2, 0]]
+#     return position, yaw
 
 
 # def quat_to_yaw(quat):

@@ -1,3 +1,112 @@
+# New
+
+## Installation
+
+```bash
+git submodule update --init
+
+conda create -n pirlnav python=3.10 cmake=3.14.0
+
+conda activate pirlnav
+
+cd habitat-sim/
+pip install -r requirements.txt
+python setup.py install --headless
+
+cd ..
+pip install -r habitat-lab/habitat_baselines/il/requirements.txt
+pip install -e habitat-lab
+pip install -e .
+
+pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+pip install zarr ifcfg einops strictfire natsort hydra-core wandb numpy==1.26 opencv-python==4.10.0.84 tensorboard
+
+# Apply my patch to habitat-lab:
+git -C habitat-lab apply ../habitat_lab.patch
+```
+
+## Data Generation
+
+Can symlink datasets to `data/`:
+- `data/demos`
+- `data/scene_datasets` (`versioned_data/hm3d-1.0/`)
+- `data/tasks`
+- `data/visual_encoders`
+
+Generate the data:
+
+```bash
+./scripts/gen_data.sh \
+    data \
+    data/zarr/ten_percent/split_0/ten_eps_ep_index.json \
+    data/zarr/ten_percent/split_0/test_rgb
+```
+
+- There's only one scene in the test split above, so there will be many duplicate eps
+
+## Train:
+
+NOTE: Edit the following according to your setup:
+- `NUM_ENVIRONMENTS` and `IL.BehaviorCloning` configs in `scripts/pvr_il.sh`
+- The wandb config in `configs/experiments/il_objectnav.yaml`
+- Make sure to change the run name (`test_run`) between different runs, otherwise it
+  will try to resume
+
+```bash
+./scripts/pvr_il.sh \
+    data \
+    data/zarr/ten_percent/split_0/test_rgb/ \
+    data/zarr/ten_percent/split_0/test_rgb/ \
+    None \
+    0 \
+    test_run \
+    test_group \
+    1 \
+    1.0 \
+    3
+```
+
+## Eval:
+
+Evaluate on the train episodes as a simple test:
+
+```bash
+CUDA_VISIBLE_DEVICES=1 ./scripts/eval_train.sh \
+    data \
+    data/zarr/ten_percent/split_0/test_rgb/ \
+    data/zarr/ten_percent/split_0/test_rgb/ \
+    data/checkpoints/objectnav_il/test_run_2/ckpt.9.pth \
+    eval_train_test_run \
+    eval_train_test_group \
+    data/zarr/ten_percent/split_0/ten_eps_ep_index.json
+```
+
+Evaluate on the validation episodes (held-out scenes):
+
+```bash
+CUDA_VISIBLE_DEVICES=1 ./scripts/eval_train.sh \
+    data \
+    data/zarr/ten_percent/split_0/test_rgb/ \
+    data/zarr/ten_percent/split_0/test_rgb/ \
+    data/checkpoints/objectnav_il/test_run_2/ckpt.9.pth \
+    eval_test_run \
+    eval_test_group
+```
+
+NOTE: Edit `NUM_ENVIRONMENTS` for more parallelism based on available resources
+when evaluating on the full dataset.
+
+## Generate a new split (e.g. a bigger one):
+
+
+
+Note: This samples diverse scene-goal pairs by sorting by (scene, goal) and then
+sampling at the desired stride. The best way to do it would be to pool eps into a list
+for each scene-goal pair and then round-robin sample until the desired ep count is
+reached. If necessary, I can implement this.
+
+
+
 # PIRLNav: Pretraining with Imitation and RL Finetuning for ObjectNav
 
 Code for our paper [PIRLNav: Pretraining with Imitation and RL Finetuning for ObjectNav](https://arxiv.org/pdf/2301.07302.pdf). 

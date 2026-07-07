@@ -28,7 +28,6 @@ mkdir -p $CHECKPOINT_DIR
 
 # MAIN_PORT=8740
 
-echo "In ObjectNav IL DDP"
 # python -u -m run \
     # --use_env \
     # --rdzv_endpoint localhost:29503 \
@@ -44,13 +43,12 @@ python -u -m torch.distributed.run \
     CHECKPOINT_FOLDER $CHECKPOINT_DIR \
     WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
-    WB.MODE offline \
+    WB.MODE online \
     TRAINER_NAME "pvr-pirlnav-il" \
-    NUM_ENVIRONMENTS 32 \
-    NUM_UPDATES 26000 \
+    NUM_ENVIRONMENTS 2 \
     IL.BehaviorCloning.wd 1e-6 \
     IL.BehaviorCloning.num_steps 64 \
-    IL.BehaviorCloning.num_mini_batch 8 \
+    IL.BehaviorCloning.num_mini_batch 2 \
     IL.BehaviorCloning.num_accumulated_gradient_steps 4 \
     IL.BehaviorCloning.use_gradient_accumulation True \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
@@ -64,31 +62,14 @@ python -u -m torch.distributed.run \
     POLICY.RGB_ENCODER.input_channels $INPUT_CHANNELS \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     NUM_CHECKPOINTS -1 \
-    CHECKPOINT_INTERVAL 5000 \
     RL.DDPPO.force_distributed True \
     TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
     TASK_CONFIG.PVR.use_dataset_frac $DATASET_FRAC \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
+    CHECKPOINT_INTERVAL 100 \
+    NUM_UPDATES 1000 \
+    # NUM_UPDATES 26000 \
     # NUM_UPDATES 52000 \
-
-    # 1 GPU:
-    # IL.BehaviorCloning.num_steps 64 \
-    # IL.BehaviorCloning.num_mini_batch 8 \
-    # IL.BehaviorCloning.num_accumulated_gradient_steps 8 \
-
-    # POLICY.STATE_ENCODER.hidden_size 128 \
-    # NUM_UPDATES 102000 \
-    # NUM_ENVIRONMENTS 4 \
-    # TASK_CONFIG.PVR.use_fixed_size_embedding True \
-
-
-# MAIN_PORT=8741 CUDA_VISIBLE_DEVICES=0 ./scripts/pvr_il.sh data /storage/dc/pvr_data/twenty_percent/non_visual_data/ /storage/dc/pvr_data/twenty_percent/clip_data/ clip_20pc ten_percent
-# MAIN_PORT=8742 CUDA_VISIBLE_DEVICES=1 ./scripts/pvr_il.sh data /storage/dc/pvr_data/twenty_five_percent/non_visual_data/ /storage/dc/pvr_data/twenty_five_percent/clip_data/ clip_25pc ten_percent
-
-# MAIN_PORT=8741 CUDA_VISIBLE_DEVICES=0 ./scripts/pvr_il.sh data \
-#     /storage/dc/pvr_data/stretch_like/twenty_percent/clip_non_visual_no_look_actions/ \
-#     /storage/dc/pvr_data/stretch_like/twenty_percent/clip_non_visual_no_look_actions/ \
-#     test \
-#     test
+    # CHECKPOINT_INTERVAL 5000 \

@@ -21,15 +21,15 @@ DATA_PATH="$DATA_DIR/tasks/objectnav_hm3d_v1/"
 # TENSORBOARD_DIR="../data/habitat/tb/objectnav_il/test/"
 # CHECKPOINT_DIR="../data/checkpoints/objectnav_il/$1/"
 
-mkdir -p $TENSORBOARD_DIR
 set -x
 
-echo "In ObjectNav IL eval"
 python -u -m run \
     --exp-config $config \
     --run-type eval \
+    TRAINER_NAME "pvr-pirlnav-il" \
     EVAL_CKPT_PATH_DIR $EVAL_CHECKPOINT_DIR \
     VIDEO_DIR "$DATA_DIR/videos/$EXP_NAME/" \
+    WB.PROJECT_NAME habitat-bc-eval \
     WB.GROUP $GROUP_NAME \
     WB.RUN_NAME $EXP_NAME \
     WB.MODE online \

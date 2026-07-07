@@ -113,118 +113,12 @@ REPRESENTATION_GENERATOR:
   # max_num_eps: 30
   split_across_gpus: True
   data_generators:
-    # raw_image:
-    #   resize_and_crop_to: 256
-    # agent_state:
-    # non_visual:
-    # clip:
-    #   use_float16: True
-      # model_path: "/data/drive2/models/clip-vit-base-patch32"
+    raw_image:
+      resize_and_crop_to: 256
+    non_visual:
     # ground_truth_costmap:
+    #   Note: These are object-level (i.e. segment-level) costmaps
     #   resize_and_crop_to: 128
-
-    predicted_costmap:
-      cost_predictor_checkpoint_paths: [
-        "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
-        "cost_predictors/round2/all_labels_objectnav_mse_scalar_bias_2_20260511_201404/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_sb_metric_2_20260523_122029/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_db_metric_20260518_200932/epoch_19.pth",
-        "cost_predictors/round2/objectnav_mse_sb_metric_20260518_204834/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_mse_scalar_bias_2_20260511_202040/epoch_19.pth",
-        "cost_predictors/round2/smacof_objectnav_mse_scalar_bias_20260511_191511/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
-        "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_sb_wass_20260518_204834/epoch_19.pth",
-        # Old:
-        # "../data/cost_predictors/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/gt_perception_new_20260519_174339/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
-      ]
-      distributional_cost_predictors: [
-        "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_sb_metric_2_20260523_122029/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_db_metric_20260518_200932/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
-        "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
-        "cost_predictors/round2/objectnav_c51_sb_wass_20260518_204834/epoch_19.pth",
-        # Old:
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
-      ]
-      resize_and_crop_to: 128
-    # ground_truth_perception_graph:
-      edge_weight_name: "euclidean_distances.median_distance"
-      filter_sim_labels: ["ceiling", "floor", "wall", "unlabeled"]
-      max_descriptor_update_image_frac: 0.3
-      use_sam21: False
-      image_width: 640
-      image_height: 480
-      hfov: 79
-      segmentor_model_path: /hpcfs/users/a1667442/nav/sg_habitat/libs/models/FastSAM-s.pt
-      # segmentor_model_path: /home/dc/sg_new/sg_habitat/libs/models/FastSAM-s.pt
-      use_remote_mappers: True
-      use_inf_mapping: True
-      matching_window_size: 6
-      num_kp_threshold: 1
-      use_segmaster_matcher: False
-      segmaster_config_path: configs/config_eval_spp_resz.yaml
-      segmaster_checkpoint_path: checkpoints/segmast3r_spp.ckpt
-      # vis_dir: temp/rollout_vis/test_multi_costmap_fix_infer
-      vis_dir: null
-      use_segmaster_geometry: False
-      remove_mask_edges: False
-      use_loop_closure: True
-      loop_closure_exclusion_window: 16
-      loop_closure_top_k: 4
-      loop_closure_required_match_count: 8
-      use_observed_node_data: True
-      use_gt_depth: False
-      use_gt_segments: False
-      use_gt_data_association: False
-
-    # costmap_visualisation:
-    #   cost_predictor_checkpoint_paths: ["/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_999.pth"]
-      cf_goals: null
-      # cf_goals: ["chair", "bed", "toilet", "plant", "tv_monitor", "sofa"]
-      # use_observed_node_data: True
-    #   costed_segment_max: 0.8
-    #   edge_weight_name: "e3d"
-    #   resize_and_crop_to: 256
-    #   max_descriptor_update_image_frac: 0.3
-    #   use_loaded_gt_graphs: False
-    #   graph_base_path: /home/dc/data/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_1/gt_perception_graphs_fix_ep_metadata_w_descriptors
-    #   graph_name: gt_perception_graph_label_descriptors.pkl.gz
-    #   use_log_costs: True
-    #   label_attribute: label
-    # predicted_costmap:
-    #   model_path: "/home/dc/data/nav_experiments/cost_predictor/fix_maps_first_ep_metadata_20251106_172317/epoch_199.pth"
-    #   # model_path: "/home/dc/data/nav_experiments/cost_predictor/norm_cost_goal_idx_fixes_2_20251103_201255/epoch_199.pth"
-    #   edge_weight_name: "e3d"
-    #   image_width: 640
-    #   image_height: 480
-    #   segmentor_model_path: /home/dc/sg_new/sg_habitat/libs/models/FastSAM-s.pt
-    #   resize_and_crop_to: 128
-    #   max_descriptor_update_image_frac: 0.3
-    #   use_remote_mappers: False
-      # filter_labels: ["floor", "ceiling"]
-      # max_descriptor_update_image_frac: 1.0
   data_storage:
     output_path: /storage/dc/pvr_data/default
     # name: "video"
@@ -259,18 +153,21 @@ PVR:
   # non_visual_keys: ["done", "reward", "next_action", "objectgoal", "next_actions", "inflection_weight"]
 
   # RGB is now included in the same dataset as the non-visual observations:
-  non_visual_keys: ["rgb", "done", "reward", "next_action", "gps", "objectgoal", "compass", "next_actions", "inflection_weight"]
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "cls"]
-  # obs_keys: ["objectgoal", "inflection_weight", "last_two_hidden_layers"]
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_hidden_layer_pooled", "cls"]
-  obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb"]
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "goal_costmap"]
-  # obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "last_two_hidden_layers", "rgb", "gt_costmap"]
-  
+
   # RGB:
   pvr_keys: []
   obs_keys: ["gps", "objectgoal", "compass", "inflection_weight", "rgb"]
+  non_visual_keys: [
+    "rgb",
+    "done",
+    "reward",
+    "next_action",
+    "gps",
+    "objectgoal",
+    "compass",
+    "next_actions",
+    "inflection_weight"
+  ]
 
   # Pred costmap:
   # pvr_keys: ["predicted_costmap"]

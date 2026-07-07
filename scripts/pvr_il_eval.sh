@@ -5,20 +5,19 @@ export HABITAT_SIM_LOG=quiet
 config="configs/experiments/il_objectnav.yaml"
 
 DATA_DIR=$1
-NV_DATASET=$2
-PVR_DATASET=$3
-PVR_KEY=$4
-COSTMAP_CHANNELS=$5
-EVAL_CHECKPOINT_DIR=$6
+EVAL_CHECKPOINT_DIR=$2
+NV_DATASET=$3
+PVR_DATASET=$4
+PVR_KEY=$5
+COSTMAP_CHANNELS=$6
 EXP_NAME=$7
 GROUP_NAME=$8
+INPUT_CHANNELS=$9
 
 # DATA_PATH="$DATA_DIR/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 DATA_PATH="$DATA_DIR/tasks/objectnav_hm3d_v1/"
 
 set -x
-
-echo "In ObjectNav IL DDP"
 
 python -u -m run \
     --exp-config $config \
@@ -45,7 +44,7 @@ python -u -m run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 3 \
+    POLICY.RGB_ENCODER.input_channels $INPUT_CHANNELS \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     POLICY.RGB_ENCODER.use_augmentations_test_time True \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
