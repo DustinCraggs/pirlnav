@@ -2,8 +2,6 @@ export GLOG_minloglevel=2
 export MAGNUM_LOG=quiet
 export HABITAT_SIM_LOG=quiet
 
-# dataset=$1
-
 config="configs/experiments/il_objectnav.yaml"
 
 DATA_DIR=$1
@@ -17,8 +15,6 @@ SUB_SPLIT_INDEX_PATH=$7
 DATA_PATH="$DATA_DIR/demos/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 
 set -x
-
-echo $PVR_DIR
 
 python -u -m run \
     --exp-config $config \

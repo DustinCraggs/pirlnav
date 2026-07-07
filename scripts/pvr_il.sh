@@ -69,7 +69,7 @@ python -u -m torch.distributed.run \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
     CHECKPOINT_INTERVAL 100 \
-    NUM_UPDATES 1000 \
+    NUM_UPDATES 5000 \
     # NUM_UPDATES 26000 \
     # NUM_UPDATES 52000 \
     # CHECKPOINT_INTERVAL 5000 \
