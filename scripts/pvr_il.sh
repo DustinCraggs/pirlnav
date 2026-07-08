@@ -51,6 +51,10 @@ python -u -m torch.distributed.run \
     IL.BehaviorCloning.num_mini_batch 2 \
     IL.BehaviorCloning.num_accumulated_gradient_steps 4 \
     IL.BehaviorCloning.use_gradient_accumulation True \
+    IL.BehaviorCloning.lr 0.001 \
+    IL.BehaviorCloning.encoder_lr 0.001 \
+    IL.BehaviorCloning.encoder_freeze_updates 0 \
+    IL.BehaviorCloning.encoder_warmup_updates 0 \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.TASK.INFLECTION_WEIGHT_SENSOR.INFLECTION_COEF $INFLECTION_COEF \
     POLICY.PVR_ENCODER.num_heads 4 \
@@ -68,7 +72,7 @@ python -u -m torch.distributed.run \
     TASK_CONFIG.PVR.use_dataset_frac $DATASET_FRAC \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
-    CHECKPOINT_INTERVAL 100 \
+    CHECKPOINT_INTERVAL 500 \
     NUM_UPDATES 5000 \
     # NUM_UPDATES 26000 \
     # NUM_UPDATES 52000 \

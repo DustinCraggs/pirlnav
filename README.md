@@ -42,6 +42,9 @@ Generate the data:
     data/zarr/ten_percent/split_0/test_rgb
 ```
 
+- This creates a zarr group at path `data/zarr/ten_percent/split_0/test_rgb` containing
+  RGB and non-visual observations (can be configured in
+  `configs/tasks/objectnav_hm3d.yaml` under `REPRESENTATION_GENERATOR`)
 - There's only one scene in the test split above, so there will be many duplicate eps
 
 ## Train:
@@ -59,7 +62,7 @@ NOTE: Edit the following according to your setup:
     data/zarr/ten_percent/split_0/test_rgb/ \
     None \
     0 \
-    test_run \
+    test_run_encoder_thaw_2 \
     test_group \
     1 \
     1.0 \
@@ -71,11 +74,11 @@ NOTE: Edit the following according to your setup:
 Evaluate on the train episodes as a simple test:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 ./scripts/eval_train.sh \
+./scripts/eval_train.sh \
     data \
     data/zarr/ten_percent/split_0/test_rgb/ \
     data/zarr/ten_percent/split_0/test_rgb/ \
-    data/checkpoints/objectnav_il/test_run_2/ckpt.9.pth \
+    data/checkpoints/objectnav_il/test_run_4/ckpt.9.pth \
     eval_train_test_run \
     eval_train_test_group \
     data/zarr/ten_percent/split_0/ten_eps_ep_index.json
@@ -84,11 +87,11 @@ CUDA_VISIBLE_DEVICES=1 ./scripts/eval_train.sh \
 Evaluate on the validation episodes (held-out scenes):
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 ./scripts/eval_train.sh \
+./scripts/eval.sh \
     data \
     data/zarr/ten_percent/split_0/test_rgb/ \
     data/zarr/ten_percent/split_0/test_rgb/ \
-    data/checkpoints/objectnav_il/test_run_2/ckpt.9.pth \
+    data/checkpoints/objectnav_il/test_run_4/ckpt.9.pth \
     eval_test_run \
     eval_test_group
 ```
@@ -98,14 +101,16 @@ when evaluating on the full dataset.
 
 ## Generate a new split (e.g. a bigger one):
 
+Example with stride 20, starting idx 0:
 
+```
+scripts/gen_sub_split.sh data data/zarr/stride_20_ep_index.json 20 0
+```
 
 Note: This samples diverse scene-goal pairs by sorting by (scene, goal) and then
 sampling at the desired stride. The best way to do it would be to pool eps into a list
 for each scene-goal pair and then round-robin sample until the desired ep count is
 reached. If necessary, I can implement this.
-
-
 
 # PIRLNav: Pretraining with Imitation and RL Finetuning for ObjectNav
 

@@ -6,57 +6,57 @@
         "length": 160
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "60",
-        "object_category": "bed",
-        "length": 267
+        "scene_id": "data/scene_datasets/hm3d/train/00758-HfMobPm86Xn/HfMobPm86Xn.basis.glb",
+        "episode_id": "756",
+        "object_category": "tv_monitor",
+        "length": 388
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "119",
-        "object_category": "bed",
-        "length": 263
+        "scene_id": "data/scene_datasets/hm3d/train/00750-E1NrAhMoqvB/E1NrAhMoqvB.basis.glb",
+        "episode_id": "7",
+        "object_category": "chair",
+        "length": 157
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "294",
-        "object_category": "bed",
-        "length": 331
+        "scene_id": "data/scene_datasets/hm3d/train/00744-1S7LAXRdDqK/1S7LAXRdDqK.basis.glb",
+        "episode_id": "887",
+        "object_category": "toilet",
+        "length": 55
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "393",
-        "object_category": "bed",
-        "length": 100
+        "scene_id": "data/scene_datasets/hm3d/train/00733-GtM3JtRvvvR/GtM3JtRvvvR.basis.glb",
+        "episode_id": "891",
+        "object_category": "sofa",
+        "length": 87
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "470",
-        "object_category": "bed",
-        "length": 60
+        "scene_id": "data/scene_datasets/hm3d/train/00680-YmWinf3mhb5/YmWinf3mhb5.basis.glb",
+        "episode_id": "815",
+        "object_category": "plant",
+        "length": 364
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "524",
-        "object_category": "bed",
-        "length": 252
+        "scene_id": "data/scene_datasets/hm3d/train/00669-DNWbUAJYsPy/DNWbUAJYsPy.basis.glb",
+        "episode_id": "87",
+        "object_category": "toilet",
+        "length": 94
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "580",
+        "scene_id": "data/scene_datasets/hm3d/train/00657-TSJmdttd2GV/TSJmdttd2GV.basis.glb",
+        "episode_id": "575",
         "object_category": "bed",
-        "length": 187
+        "length": 256
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "662",
-        "object_category": "bed",
-        "length": 46
+        "scene_id": "data/scene_datasets/hm3d/train/00643-ggNAcMh8JPT/ggNAcMh8JPT.basis.glb",
+        "episode_id": "815",
+        "object_category": "sofa",
+        "length": 44
     },
     {
-        "scene_id": "data/scene_datasets/hm3d/train/00009-vLpv2VX547B/vLpv2VX547B.basis.glb",
-        "episode_id": "731",
-        "object_category": "bed",
-        "length": 178
+        "scene_id": "data/scene_datasets/hm3d/train/00626-XiJhRLvpKpX/XiJhRLvpKpX.basis.glb",
+        "episode_id": "952",
+        "object_category": "sofa",
+        "length": 145
     }
 ]

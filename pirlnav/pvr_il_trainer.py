@@ -68,7 +68,6 @@ from pirlnav.pvr_dataset import create_pvr_dataset_splits, get_fast_zarr_dataset
 from pirlnav.utils.env_utils import construct_envs
 from pirlnav.utils.utils import SimpleProfiler
 
-
 # TODO Next:
 # - Ensure profiling is working and logged to wandb
 #   - Need to log dataloader time, inference time, training iteration time
@@ -156,7 +155,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         return spaces.Dict(obs_space)
 
-    def _init_demonstration_dataset(self):
+    def _init_demonstration_dataset(self, num_splits=None):
         pvr_config = self.config.TASK_CONFIG.PVR
         pvr_keys = pvr_config.pvr_keys
 
@@ -172,7 +171,10 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             world_size = 1
 
         # Calculate TOTAL splits needed across all GPUs
-        total_splits_across_gpus = self.config.NUM_ENVIRONMENTS * world_size
+        if num_splits is None:
+            total_splits_across_gpus = self.config.NUM_ENVIRONMENTS * world_size
+        else:
+            total_splits_across_gpus = num_splits
 
         pvr_datasets = create_pvr_dataset_splits(
             pvr_config.pvr_data_path,
@@ -390,10 +392,24 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         )
         self.actor_critic.to(self.device)
 
+        # Respect global trainer-level option to not train encoder, but also allow
+        # IL-specific early-freeze behavior via config: IL.BehaviorCloning.encoder_freeze_updates
+        self._static_encoder = False
         if not self.config.RL.DDPPO.train_encoder:
             self._static_encoder = True
             for param in self.actor_critic.net.visual_encoder.parameters():
                 param.requires_grad_(False)
+
+        # If encoder_freeze_updates is enabled, freeze the backbone until thaw.
+        if self.config.IL.BehaviorCloning.encoder_freeze_updates > 0:
+            # Freeze only backbone (pretrained weights) initially. We'll unfreeze later.
+            for p in self.actor_critic.net.visual_encoder.backbone.parameters():
+                print(f"Freezing {p.shape} for {self.config.IL.BehaviorCloning.encoder_freeze_updates} updates")
+                p.requires_grad_(False)
+            # Mark flag so trainer can unfreeze later
+            self._encoder_initially_frozen = True
+        else:
+            self._encoder_initially_frozen = False
 
         agent_cls = ILAgent if not self._is_distributed else DDPILAgent
         self.agent = agent_cls(
@@ -407,6 +423,13 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             wd=il_cfg.wd,
             entropy_coef=il_cfg.entropy_coef,
         )
+        # Ensure optimizer param groups exist and index 0 corresponds to encoder/backbone params
+        # (ILAgent constructs visual encoder params first). If encoder was frozen above,
+        # ensure its lr is set according to schedule for the first update.
+        # compute and set initial encoder lr for update index 1
+        initial_encoder_lr = self._compute_encoder_lr(1)
+        if len(self.agent.optimizer.param_groups) > 0:
+            self.agent.optimizer.param_groups[0]["lr"] = initial_encoder_lr
 
     def _init_envs(
         self, config=None, shuffle_scenes: bool = True, env_cls=None
@@ -584,6 +607,23 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         accumulate_gradients = il_cfg.use_gradient_accumulation
         num_accum_steps = il_cfg.num_accumulated_gradient_steps
 
+        # Before updating, compute encoder lr for the upcoming update and set it so
+        # optimizer.step() inside agent.update uses the scheduled lr.
+        upcoming_update = self.num_updates_done + 1
+        # If we had initially frozen the backbone, unfreeze it at the configured
+        # thaw update so gradients start flowing.
+        il_cfg = self.config.IL.BehaviorCloning
+        freeze = int(il_cfg.encoder_freeze_updates or 0)
+        if self._encoder_initially_frozen and upcoming_update > freeze:
+            for p in self.actor_critic.net.visual_encoder.backbone.parameters():
+                print(f"Thawing {p.shape} at update {upcoming_update}")
+                p.requires_grad_(True)
+            self._encoder_initially_frozen = False
+
+        scheduled_encoder_lr = self._compute_encoder_lr(upcoming_update)
+        if len(self.agent.optimizer.param_groups) > 0:
+            self.agent.optimizer.param_groups[0]["lr"] = scheduled_encoder_lr
+
         (
             action_loss,
             rnn_hidden_states,
@@ -616,6 +656,41 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             actual_action_loss,
             accuracy,
         )
+
+    def _compute_encoder_lr(self, update_idx: int) -> float:
+        """Compute scheduled encoder lr for a given (1-based) update index.
+
+        Behavior:
+        - If update_idx <= encoder_freeze_updates -> lr = 0
+        - If within warmup period after freeze -> linearly interpolate from 0 to
+          encoder_lr
+        - After warmup -> linear decay from encoder_lr to 0 across remaining NUM_UPDATES
+        """
+        il_cfg = self.config.IL.BehaviorCloning
+        base_encoder_lr = float(getattr(il_cfg, "encoder_lr", 0.0) or 0.0)
+        freeze = int(getattr(il_cfg, "encoder_freeze_updates", 0) or 0)
+        warmup = int(getattr(il_cfg, "encoder_warmup_updates", 0) or 0)
+
+        if update_idx <= freeze:
+            return 0.0
+
+        # in warmup
+        if warmup > 0 and update_idx <= freeze + warmup:
+            return base_encoder_lr * float((update_idx - freeze) / warmup)
+
+        # after warmup, linear decay from base_encoder_lr to 0 across remaining updates
+        total_updates = (
+            int(self.config.NUM_UPDATES) if self.config.NUM_UPDATES != -1 else None
+        )
+        decay_start = freeze + warmup
+        if total_updates is None or total_updates <= decay_start:
+            # No decay period defined; keep base lr
+            return base_encoder_lr
+
+        remaining = total_updates - decay_start
+        step_into_decay = max(0, update_idx - decay_start)
+        decay_frac = min(1.0, step_into_decay / remaining)
+        return base_encoder_lr * (1.0 - decay_frac)
 
     @profiling_wrapper.RangeContext("train")
     def train(self) -> None:
@@ -719,6 +794,14 @@ class PVRILEnvDDPTrainer(PPOTrainer):
                 # updated this step. However, it still needs to be counted as a step
                 # e.g. for logging and checkpointing purposes.
                 self.num_updates_done += 1
+
+                # After scheduler.step() inside _update_agent, the global lr scheduler
+                # may have overwritten param group lrs; ensure encoder group lr is
+                # set correctly for the next upcoming update.
+                next_update = self.num_updates_done + 1
+                next_encoder_lr = self._compute_encoder_lr(next_update)
+                if len(self.agent.optimizer.param_groups) > 0:
+                    self.agent.optimizer.param_groups[0]["lr"] = next_encoder_lr
 
                 losses = self._coalesce_post_step(
                     dict(
@@ -844,17 +927,17 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         profiler = SimpleProfiler()
         print(f"-------------- {checkpoint_path} --------------")
-        # TODO: Don't need to init the whold dataset here just to get the metadata:
-        self._init_demonstration_dataset()
+        # TODO: Don't need to init the whole dataset here just to get the metadata:
+        # Need to override num_splits here for when len(dataset) < num_envs:
+        self._init_demonstration_dataset(num_splits=1)
 
         if self._is_distributed:
             raise RuntimeError("Evaluation does not support distributed mode")
 
         # Map location CPU is almost always better than mapping to a CUDA device.
         if self.config.EVAL.SHOULD_LOAD_CKPT:
-            ckpt_dict = self.load_checkpoint(
-                checkpoint_path, map_location="cpu", weights_only=False
-            )
+            ckpt_dict = self.load_checkpoint(checkpoint_path, map_location="cpu")
+            # checkpoint_path, map_location="cpu", weights_only=False
         else:
             ckpt_dict = {}
 
