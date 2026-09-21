@@ -15,7 +15,7 @@ from habitat_baselines.rl.ppo import Net
 
 from pirlnav.policy.policy import ILPolicy
 from pirlnav.policy.pvr_encoder import PvrEncoder
-from pirlnav.policy.transforms import get_transform
+from pirlnav.policy.transforms import get_transform, augment_costmap
 from pirlnav.policy.visual_encoder import VisualEncoder
 from pirlnav.utils.utils import load_encoder
 
@@ -136,6 +136,10 @@ class ObjectNavILMAENet(Net):
                     return img.permute(0, 2, 3, 1)
 
                 self._costmap_resize = _costmap_transform
+
+            self.costmap_dropout_p = rgb_config.get("costmap_dropout_p", 0.0)
+            self.costmap_noise_std = rgb_config.get("costmap_noise_std", 0.0)
+            self.costmap_false_neg_p = rgb_config.get("costmap_false_neg_p", 0.0)
 
             self.visual_encoder = VisualEncoder(
                 image_size=rgb_config.image_size,
@@ -314,6 +318,14 @@ class ObjectNavILMAENet(Net):
                 if rgb_obs.shape[:3] != costmap.shape[:3]:
                     print("SHAPE MISMATCH")
                     print(f"{rgb_obs.shape=} {costmap.shape=}")
+
+                if self.training and (self.costmap_dropout_p > 0 or self.costmap_noise_std > 0 or self.costmap_false_neg_p > 0):
+                    costmap = augment_costmap(
+                        costmap, 
+                        p_dropout=self.costmap_dropout_p, 
+                        noise_std=self.costmap_noise_std, 
+                        p_false_neg=self.costmap_false_neg_p
+                    )
 
                 # Channel stack:
                 rgb_obs = torch.cat([rgb_obs, costmap], dim=-1)

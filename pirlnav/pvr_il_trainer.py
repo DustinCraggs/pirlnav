@@ -91,6 +91,64 @@ from pirlnav.utils.utils import SimpleProfiler
 # - Manually inspect obs to ensure they are set
 
 
+import cv2
+
+def center_crop_to_target(img, target):
+    """
+    Resizes shortest edge to target, then center crops to target x target.
+    """
+    if isinstance(img, torch.Tensor):
+        img_np = img.cpu().numpy()
+    else:
+        img_np = img
+        
+    h, w = img_np.shape[:2]
+    if h < w:
+        new_h = target
+        new_w = int(target * (w / h))
+    elif w < h:
+        new_w = target
+        new_h = int(target * (h / w))
+    else:
+        new_h, new_w = target, target
+        
+    img_np = cv2.resize(img_np, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    
+    crop_top = int(round((new_h - target) / 2.0))
+    crop_left = int(round((new_w - target) / 2.0))
+    img_np = img_np[crop_top:crop_top+target, crop_left:crop_left+target]
+    
+    if img_np.ndim == 2:
+        img_np = np.expand_dims(img_np, -1)
+    return img_np
+
+def overlay_costmap_on_rgb(cm, bg_rgb):
+    """
+    Overlays a single-channel costmap onto an RGB background.
+    Assumes cm and bg_rgb have the same height and width.
+    """
+    # Ensure cm is in [0, 1] range. The data generator outputs floats in [0, 255]
+    if cm.max() > 1.0:
+        cm = cm / 255.0
+
+    # Ensure cm has shape (H, W, 1)
+    if cm.ndim == 2:
+        cm = np.expand_dims(cm, -1)
+    elif cm.ndim == 3 and cm.shape[-1] != 1:
+        cm = cm[..., 0:1] # Take first channel if multiple
+            
+    cm_norm = np.clip(cm, 0, 1)
+    # Colormap returns BGR, convert to RGB since Habitat expects RGB
+    colored = cv2.applyColorMap((cm_norm * 255).astype(np.uint8), cv2.COLORMAP_SUMMER)
+    colored = cv2.cvtColor(colored, cv2.COLOR_BGR2RGB)
+    
+    mask = (cm >= 0.99)
+    if mask.ndim == 2:
+        mask = np.expand_dims(mask, -1)
+        
+    vis_image = np.where(mask, bg_rgb, colored)
+    return vis_image
+
 @baseline_registry.register_trainer(name="pvr-pirlnav-il")
 class PVRILEnvDDPTrainer(PPOTrainer):
     def __init__(self, config=None):
@@ -255,6 +313,7 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         visual_keys = [*pvr_config.pvr_keys, "rgb"]
         # pvr_shapes = {k: example_batch[k][0].shape for k in visual_keys}
+        print(f"{example_batch.keys()=}")
         pvr_shapes = {k: example_batch[k].shape for k in visual_keys}
         # pvr_shapes = {k: (256, 256) for k in pvr_config.pvr_keys}
 
@@ -454,7 +513,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         )
 
     def _init_envs(
-        self, config=None, shuffle_scenes: bool = True, env_cls=None
+        self,
+        config=None,
+        shuffle_scenes: bool = True,
+        env_cls=None,
+        episodes_to_skip=None,
     ) -> None:
         if config is None:
             config = self.config
@@ -464,6 +527,30 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         if sub_split_index_path is not None:
             with open(sub_split_index_path, "r") as f:
                 sub_split_index = json.load(f)
+
+        if episodes_to_skip is not None and len(episodes_to_skip) > 0:
+            if sub_split_index is None:
+                from pirlnav.utils.env_utils import get_episodes
+
+                all_episodes = get_episodes(config)
+                sub_split_index = [
+                    {
+                        "scene_id": ep.scene_id,
+                        "episode_id": ep.episode_id,
+                        "object_category": ep.object_category,
+                    }
+                    for ep in all_episodes
+                ]
+
+            sub_split_index = [
+                ep
+                for ep in sub_split_index
+                if (ep["scene_id"], str(ep["episode_id"])) not in episodes_to_skip
+            ]
+
+            if len(sub_split_index) == 0:
+                self.envs = None
+                return
 
         env_cls = env_cls or get_env_class(config.ENV_NAME)
 
@@ -929,7 +1016,38 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         if config.VERBOSE:
             logger.info(f"env config: {config}")
 
-        self._init_envs(config, shuffle_scenes=False, env_cls=CustomEnv)
+        stats_episodes: Dict[Any, Any] = {}
+        if config.RESUME_RUN:
+            stats_path = os.path.join(config.VIDEO_DIR, "stats.json")
+            if os.path.exists(stats_path):
+                with open(stats_path, "r") as f:
+                    stats_json = json.load(f)
+                for k, v in stats_json.items():
+                    scene_id, episode_id = k.rsplit("_", 1)
+                    stats_episodes[(scene_id, episode_id)] = v
+
+                if len(stats_episodes) > 0:
+                    print(f"\n{'='*60}")
+                    print(
+                        f"RESUMING EVALUATION: Loaded {len(stats_episodes)} completed episodes"
+                    )
+                    print(f"from {stats_path}")
+                    print(f"{'='*60}\n")
+                logger.info(
+                    f"Loaded {len(stats_episodes)} completed episodes from {stats_path}"
+                )
+
+        self._init_envs(
+            config,
+            shuffle_scenes=False,
+            env_cls=CustomEnv,
+            episodes_to_skip=set(stats_episodes.keys()),
+        )
+
+        if self.envs is None:
+            logger.info("All episodes already evaluated. Exiting.")
+            self._log_final_metrics(stats_episodes, ckpt_dict, writer)
+            return
 
         action_space = self.action_space
         if self.using_velocity_ctrl:
@@ -990,9 +1108,6 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             device=self.device,
             dtype=torch.bool,
         )
-        stats_episodes: Dict[Any, Any] = (
-            {}
-        )  # dict of dicts that stores stats per episode
 
         rgb_frames = [
             [] for _ in range(self.config.NUM_ENVIRONMENTS)
@@ -1002,13 +1117,15 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         number_of_eval_episodes = self.config.TEST_EPISODE_COUNT
         if number_of_eval_episodes == -1:
-            number_of_eval_episodes = sum(self.envs.number_of_episodes)
+            number_of_eval_episodes = len(stats_episodes) + sum(
+                self.envs.number_of_episodes
+            )
         else:
-            total_num_eps = sum(self.envs.number_of_episodes)
+            total_num_eps = len(stats_episodes) + sum(self.envs.number_of_episodes)
             if total_num_eps < number_of_eval_episodes:
                 logger.warn(
                     f"Config specified {number_of_eval_episodes} eval episodes"
-                    ", dataset only has {total_num_eps}."
+                    f", dataset only has {total_num_eps}."
                 )
                 logger.warn(f"Evaluating with {total_num_eps} instead.")
                 number_of_eval_episodes = total_num_eps
@@ -1019,7 +1136,11 @@ class PVRILEnvDDPTrainer(PPOTrainer):
 
         current_episodes = self.envs.current_episodes()
 
-        pbar = tqdm.tqdm(total=number_of_eval_episodes)
+        pbar = tqdm.tqdm(
+            total=number_of_eval_episodes,
+            smoothing=0,
+            initial=len(stats_episodes),
+        )
         logger.info("Sampling actions deterministically...")
         self.actor_critic.eval()
 
@@ -1252,9 +1373,31 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             # Store video frames after PVRs have been added:
             for i in range(n_envs):
                 if len(self.config.VIDEO_OPTION) > 0:
+                    # Create a copy of the obs dictionary to modify
+                    obs_dict = {k: v[i] for k, v in batch.items()}
+
+                    for costmap_name in costmap_names:
+                        if costmap_name in obs_dict and "rgb" in obs_dict:
+                            cm = obs_dict[costmap_name].cpu().numpy()
+                            # Align all heights to original size (e.g. 480)
+                            target = obs_dict["rgb"].shape[0]
+                            
+                            # Upsample costmap to target
+                            cm = cv2.resize(cm, (target, target), interpolation=cv2.INTER_NEAREST)
+                            if cm.ndim == 2:
+                                cm = np.expand_dims(cm, -1)
+                                
+                            bg_rgb = obs_dict["rgb"].cpu().numpy()
+                            bg_rgb_cropped = center_crop_to_target(bg_rgb, target)
+                            vis_image = overlay_costmap_on_rgb(cm, bg_rgb_cropped)
+                            obs_dict[costmap_name] = vis_image
+                            obs_dict["rgb"] = bg_rgb_cropped
+                            if "depth" in obs_dict:
+                                obs_dict["depth"] = center_crop_to_target(obs_dict["depth"], target)
+
                     # TODO move normalization / channel changing out of the policy and undo it here
                     frame = observations_to_image(
-                        {k: v[i] for k, v in batch.items()},
+                        obs_dict,
                         infos[i],
                         extra_sensors=costmap_names,
                     )
@@ -1301,7 +1444,15 @@ class PVRILEnvDDPTrainer(PPOTrainer):
             # profiler.exit("pause_envs")
             profiler.exit("entire_eval_iter")
 
+        self._log_final_metrics(stats_episodes, ckpt_dict, writer)
+
+    def _log_final_metrics(self, stats_episodes, ckpt_dict, writer):
         num_episodes = len(stats_episodes)
+        if num_episodes == 0:
+            if getattr(self, "envs", None) is not None:
+                self.envs.close()
+            return
+
         aggregated_stats = {}
         skip_keys = {"ep_info"}
 
@@ -1327,7 +1478,8 @@ class PVRILEnvDDPTrainer(PPOTrainer):
         for k, v in metrics.items():
             writer.add_scalar(f"eval_metrics/{k}", v, step_id)
 
-        self.envs.close()
+        if getattr(self, "envs", None) is not None:
+            self.envs.close()
 
     def add_pvrs_to_batch(
         self,

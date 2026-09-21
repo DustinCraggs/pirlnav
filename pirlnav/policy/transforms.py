@@ -140,3 +140,40 @@ def resize_rgb_costmap(x, size):
         x = TF.resize(x, size, interpolation=TF.InterpolationMode.BILINEAR)
 
     return x
+
+def augment_costmap(costmap, p_dropout=0.0, noise_std=0.0, p_false_neg=0.0):
+    B = costmap.shape[0]
+    device = costmap.device
+    dtype = costmap.dtype
+    
+    # Work with floats
+    costmap = costmap.float()
+    
+    for i in range(B):
+        # Dropout
+        if p_dropout > 0 and torch.rand(1, device=device).item() < p_dropout:
+            unique_costs = torch.unique(costmap[i])
+            non_max = unique_costs[unique_costs < 255.0]
+            if len(non_max) > 0:
+                idx = torch.randint(0, len(non_max), (1,), device=device).item()
+                target_cost = non_max[idx]
+                mask = costmap[i] == target_cost
+                costmap[i][mask] = 255.0
+                
+        # False negative (increase cost)
+        if p_false_neg > 0 and torch.rand(1, device=device).item() < p_false_neg:
+            unique_costs = torch.unique(costmap[i])
+            non_max = unique_costs[unique_costs < 255.0]
+            if len(non_max) > 0:
+                idx = torch.randint(0, len(non_max), (1,), device=device).item()
+                target_cost = non_max[idx]
+                mask = costmap[i] == target_cost
+                increase = torch.rand(1, device=device).item() * 255.0
+                costmap[i][mask] = torch.clamp(costmap[i][mask] + increase, 0.0, 255.0)
+
+        # Gaussian noise
+        if noise_std > 0:
+            noise = torch.randn_like(costmap[i]) * noise_std * 255.0
+            costmap[i] = torch.clamp(costmap[i] + noise, 0.0, 255.0)
+            
+    return costmap.to(dtype)

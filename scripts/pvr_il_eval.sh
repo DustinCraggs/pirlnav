@@ -12,6 +12,8 @@ COSTMAP_CHANNELS=$5
 EVAL_CHECKPOINT_DIR=$6
 EXP_NAME=$7
 GROUP_NAME=$8
+INPUT_CHANNELS=$9
+COST_PREDICTOR_PATH=${10}
 
 # DATA_PATH="$DATA_DIR/demos/datasets/objectnav/objectnav_hm3d/objectnav_hm3d_hd"
 DATA_PATH="$DATA_DIR/tasks/objectnav_hm3d_v1/"
@@ -19,6 +21,10 @@ DATA_PATH="$DATA_DIR/tasks/objectnav_hm3d_v1/"
 set -x
 
 echo "In ObjectNav IL DDP"
+
+# If SLURM_NTASKS > 1, it will use distributed mode which is not supported for eval:
+unset SLURM_JOBID
+unset SLURM_NTASKS
 
 python -u -m run \
     --exp-config $config \
@@ -32,10 +38,11 @@ python -u -m run \
     VIDEO_DIR "$DATA_DIR/videos/$GROUP_NAME/$EXP_NAME" \
     TRAINER_NAME "pvr-pirlnav-il" \
     TEST_EPISODE_COUNT -1 \
-    NUM_ENVIRONMENTS 12 \
+    NUM_ENVIRONMENTS 8 \
     EVAL.SPLIT "val" \
     EVAL.USE_CKPT_CONFIG False \
     TASK_CONFIG.DATASET.TYPE "ObjectNav-v1" \
+    TASK_CONFIG.SIMULATOR.ACTION_SPACE_CONFIG "v1_no_op_look" \
     TASK_CONFIG.DATASET.DATA_PATH "$DATA_PATH/{split}/{split}.json.gz" \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
     TASK_CONFIG.PVR.non_visual_obs_data_path $NV_DATASET \
@@ -45,10 +52,12 @@ python -u -m run \
     POLICY.SEQ2SEQ.use_prev_action True \
     POLICY.SEQ2SEQ.use_final_obs_resid_mlp False \
     TASK_CONFIG.PVR.use_pvr_encoder False \
-    POLICY.RGB_ENCODER.input_channels 3 \
+    POLICY.RGB_ENCODER.input_channels $INPUT_CHANNELS \
     POLICY.RGB_ENCODER.costmap_channels $COSTMAP_CHANNELS \
     POLICY.RGB_ENCODER.use_augmentations_test_time True \
     TASK_CONFIG.PVR.pvr_key $PVR_KEY \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generators.predicted_costmap.cost_predictor_checkpoint_paths "['${COST_PREDICTOR_PATH}']" \
+    TASK_CONFIG.REPRESENTATION_GENERATOR.data_generators.predicted_costmap.distributional_cost_predictors "[]"
 
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.name clip \
     # TASK_CONFIG.REPRESENTATION_GENERATOR.data_generator.clip_kwargs.model_path None \
@@ -58,7 +67,3 @@ python -u -m run \
     # TASK_CONFIG.DATASET.SUB_SPLIT_INDEX_PATH "$DATA_DIR/pvr_demos/ten_percent/ep_index.json" \
 
     # POLICY.RGB_ENCODER.augmentations_name "" \
-
-# MAIN_PORT=8740 CUDA_VISIBLE_DEVICES=1 ./scripts/eval_train.sh data /storage/dc/pvr_data/one_ep ../data/checkpoints/objectnav_il/pirlnav_test/ckpt.0.pth pirlnav_il_1pc_3_ckpt_2_train one_percent_eval
-# MAIN_PORT=8741 CUDA_VISIBLE_DEVICES=1 ./scripts/pvr_il_eval_train.sh data /storage/dc/pvr_data/ten_percent/ ../data/checkpoints/objectnav_il/pvr_clip_ten_percent_heads_4_long_4/ckpt.2.pth test_video_2 test_video_2
-# MAIN_PORT=8741 CUDA_VISIBLE_DEVICES=1 ./scripts/pvr_il_eval_train.sh data /storage/dc/pvr_data/stretch_like/twenty_percent/clip_non_visual_movement_only/ /storage/dc/pvr_data/stretch_like/twenty_percent/clip_non_visual_movement_only/ data/checkpoints/objectnav_il/clip_no_pose_3/ckpt.19.pth stretch_20pc clip_no_gps_no_compass

@@ -28,7 +28,9 @@ from enum import Enum
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 from habitat_sim.utils.common import quat_to_magnum
-from habitat.sims.habitat_simulator.actions import HabitatSimV0ActionSpaceConfiguration
+from habitat.sims.habitat_simulator.actions import (
+    HabitatSimV0ActionSpaceConfiguration
+)
 from pirlnav.environment import SimpleRLEnv
 from pirlnav.utils.env_utils import construct_envs, generate_dataset_split_json
 from habitat.core.vector_env import CURRENT_EPISODE_NAME
@@ -812,6 +814,15 @@ class RepresentationGenerator:
     ):
         data = {}
         for data_generator in self._data_generators:
+            import inspect
+
+            kwargs = {}
+            if (
+                paused_envs is not None
+                and "paused_envs" in inspect.signature(data_generator.generate).parameters
+            ):
+                kwargs["paused_envs"] = paused_envs
+
             output = data_generator.generate(
                 ep_metadata,
                 actions,
@@ -821,7 +832,7 @@ class RepresentationGenerator:
                 infos,
                 self._envs,
                 skipped_last,
-                paused_envs=paused_envs,
+                **kwargs,
             )
             data.update(output)
 
@@ -1348,6 +1359,7 @@ class GroundTruthPerceptionGraphGenerator:
                         # Legacy configuration:
                         node_attributes = config["dataset"]["observation_attributes"]
                         edge_weight_name = config["dataset"]["edge_weight_name"]
+                        max_seq_len = config["dataloader"]["max_seq_len"] if "dataloader" in config else None
                     else:
                         # TODO: If using CF visual goals, do we need to look for where
                         # the goal key is set?
@@ -1357,6 +1369,10 @@ class GroundTruthPerceptionGraphGenerator:
                         edge_weight_name = config["dataset_defaults"][
                             "edge_weight_name"
                         ]
+                        if "dataloader" in config:
+                            max_seq_len = config["dataloader"].get("max_seq_len", None)
+                        else:
+                            max_seq_len = None
 
                     cost_predictors[label] = CostPredictor(
                         cost_predictor_worker,
@@ -1365,6 +1381,7 @@ class GroundTruthPerceptionGraphGenerator:
                         image_height,
                         image_width,
                         cost_scale=0.8,
+                        # max_seq_len=max_seq_len,
                         max_seq_len=None,
                         cost_pad_value=1.0,
                     )
@@ -1532,16 +1549,19 @@ class GroundTruthPerceptionGraphGenerator:
 
                 results = [ray.get(f) if f is not None else None for f in costmap_fs]
 
-                valid_result = next(r for r in results if r is not None)
-                dummy_cm_dict = {
-                    k: np.zeros_like(v) for k, v in valid_result[0].items()
-                }
-                dummy_dist_dict = (
-                    {k: np.zeros_like(v) for k, v in valid_result[1].items()}
-                    if valid_result[1] is not None
-                    else None
-                )
-                dummy_result = (dummy_cm_dict, dummy_dist_dict)
+                valid_result = next((r for r in results if r is not None), None)
+                if valid_result is not None:
+                    dummy_cm_dict = {
+                        k: np.zeros_like(v) for k, v in valid_result[0].items()
+                    }
+                    dummy_dist_dict = (
+                        {k: np.zeros_like(v) for k, v in valid_result[1].items()}
+                        if valid_result[1] is not None
+                        else None
+                    )
+                    dummy_result = (dummy_cm_dict, dummy_dist_dict)
+                else:
+                    dummy_result = ({}, None)
 
                 return [r if r is not None else dummy_result for r in results]
             # TODO: No need to get the graphs on every step (they are obtained
@@ -1715,6 +1735,12 @@ class PredictedCostmapImageGenerator:
         paused_envs=None,
     ):
         paused_envs = paused_envs or []
+        if len(paused_envs) == len(ep_metadata):
+            h, w = observations[0]["rgb"].shape[:2]
+            dummy_cm = np.zeros((h, w, 1), dtype=np.float32)
+            dummy_cm = self._apply_transforms(dummy_cm)
+            return {"predicted_costmap": [dummy_cm] * len(ep_metadata)}
+
         if self._use_remote_mappers:
             return self._get_costmap_parallel(
                 ep_metadata,
@@ -1781,6 +1807,15 @@ class PredictedCostmapImageGenerator:
         paused_envs=None,
     ):
         paused_envs = paused_envs or []
+        if len(paused_envs) == len(ep_metadata):
+            h, w = observations[0]["rgb"].shape[:2]
+            dummy_batch = np.zeros((len(ep_metadata), h, w, 1), dtype=np.float32)
+            transformed_dummy = self._apply_transforms(dummy_batch)
+            output_data = {}
+            for data_name in self.data_names:
+                output_data[data_name] = transformed_dummy
+            return output_data
+
         goal_descriptors = self._get_goal_descriptors(ep_metadata)
 
         results = self._graph_generator.generate(

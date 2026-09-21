@@ -34,7 +34,7 @@ echo "In ObjectNav IL DDP"
     # --rdzv_endpoint localhost:29503 \
 # --nnodes 1 \
 python -u -m torch.distributed.run \
-    --master_port 29504 \
+    --master_port ${MAIN_PORT:-29504} \
     --nproc_per_node $N_PROC_PER_NODE \
     run.py \
     --exp-config $config \
@@ -70,7 +70,10 @@ python -u -m torch.distributed.run \
     TASK_CONFIG.PVR.pvr_data_path $PVR_DATASET \
     TASK_CONFIG.PVR.use_dataset_frac $DATASET_FRAC \
     POLICY.RGB_ENCODER.pretrained_encoder $DATA_DIR/visual_encoders/omnidata_DINO_02.pth \
-    TASK_CONFIG.PVR.pvr_key $PVR_KEY \
+    TASK_CONFIG.PVR.pvr_key $PVR_KEY
+    # POLICY.RGB_ENCODER.costmap_dropout_p 0.05 \
+    # POLICY.RGB_ENCODER.costmap_noise_std 0.05 \
+    # POLICY.RGB_ENCODER.costmap_false_neg_p 0.05 \
     # NUM_UPDATES 52000 \
 
     # 1 GPU:
