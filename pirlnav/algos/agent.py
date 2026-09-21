@@ -105,16 +105,6 @@ class ILAgent(nn.Module):
             actions_batch = batch["actions"].view(T, N, -1)
             logits = logits.view(T, N, -1)
 
-            # directory = "temp/pvr_train_vs_eval/eval_demo"
-            # num_batches = 640
-            # self.batch_store["actions"].append(actions_batch)
-            # if len(self.batch_store["actions"]) == num_batches:
-            #     torch.save(
-            #         torch.cat(self.batch_store["actions"], dim=0),
-            #         f"{directory}/actions.pt",
-            #     )
-            #     exit()
-
             selected_actions = logits.argmax(-1)
             num_correct_actions += (
                 (selected_actions == actions_batch.squeeze(-1)).float().sum().item()
