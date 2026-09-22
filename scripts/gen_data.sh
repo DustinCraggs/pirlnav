@@ -54,3 +54,9 @@ python run.py \
 #     data \
 #     /storage/dc/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0_ep_index.json \
 #     /storage/dc/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0/costmap_costdist_zarr_2_test
+
+# CUDA_VISIBLE_DEVICES=1 ./scripts/gen_data.sh \
+#     data \
+#     /storage/dc/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0_ep_index.json \
+#     /storage/dc/nav_datasets/pirlnav_costmap_datasets/ten_percent/split_0/h131_ce_costdist_zarr_ss3 \
+#     completed_eps_splits/h131_split_0/completed_eps_3.txt

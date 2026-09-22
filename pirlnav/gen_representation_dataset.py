@@ -44,7 +44,7 @@ from PIL import Image
 # TODO: Temporary hack as these are not accessible as installable packages:
 # sys.path.append("/storage/dc/sg/sg_habitat")
 # sys.path.append("/home/dc/sg_new/sg_habitat")
-# sys.path.append(os.environ.get("SG_HABITAT_PATH"))
+sys.path.append(os.environ.get("SG_HABITAT_PATH"))
 
 from libs.mapper.map_incremental import IncrementalMapper, SimIncrementalMapper
 from libs.mapper.parallel_mapper import (
@@ -586,11 +586,23 @@ class RepresentationGenerator:
         full_sub_split_index = sub_split_index.copy()
 
         filter_existing_path = config["TASK_CONFIG"]["DATASET"]["FILTER_EXISTING_PATH"]
+        auto_resume = getattr(config["TASK_CONFIG"]["DATASET"], "AUTO_RESUME", False)
 
-        print(f"Filter existing path: {filter_existing_path}")
+        lines = []
         if filter_existing_path is not None:
+            print(f"Filter existing path: {filter_existing_path}")
             with open(filter_existing_path, "r") as f:
-                lines = f.readlines()
+                lines.extend(f.readlines())
+
+        if auto_resume:
+            output_path = config["TASK_CONFIG"]["REPRESENTATION_GENERATOR"]["data_storage"]["output_path"]
+            completed_eps_path = os.path.join(output_path, "completed_eps.txt")
+            if os.path.exists(completed_eps_path):
+                print(f"Auto-resuming from: {completed_eps_path}")
+                with open(completed_eps_path, "r") as f:
+                    lines.extend(f.readlines())
+
+        if len(lines) > 0:
             # The completed episode tracker uses a non-standard format:
             matcher = re.compile(r"(.*)_(\d+)_(\w+)")
             filter_eps = set(matcher.match(line).groups() for line in lines)
@@ -1941,7 +1953,11 @@ class PredictedCostmapImageGenerator:
         # Use no_grad to prevent PyTorch from building expensive autograd graphs
         with torch.no_grad():
             if self._resize_and_crop_to:
+                if not is_batched:
+                    tensor_data = tensor_data.unsqueeze(0)
                 tensor_data = self._apply_resize_and_crop(tensor_data)
+                if not is_batched:
+                    tensor_data = tensor_data.squeeze(0)
         #     for transform in self._transforms:
         #         tensor_data = transform(tensor_data)
 

@@ -27,12 +27,12 @@ SIMULATOR:
     WIDTH: 640
     HEIGHT: 480
     HFOV: 79
-    POSITION: [0, 0.88, 0]
+    # POSITION: [0, 0.88, 0]
     # Stretch-like
     # WIDTH: 450
     # HEIGHT: 600
     # HFOV: 90
-    # POSITION: [0, 1.3, 0]
+    POSITION: [0, 1.31, 0]
     # ORIENTATION: [-0.35, 0, 0]
   DEPTH_SENSOR:
     WIDTH: 640
@@ -81,6 +81,7 @@ DATASET:
   SORT_BY_SCENE_AND_GOAL: False
   SUB_SPLIT_INDEX_PATH: null
   FILTER_EXISTING_PATH: null
+  AUTO_RESUME: True
 
   # CONTENT_SCENES: [
   #   # 1S7LAXRdDqK,
@@ -111,7 +112,7 @@ REPRESENTATION_GENERATOR:
   generate_skip_index: False
   max_num_eps: null
   # max_num_eps: 30
-  split_across_gpus: True
+  split_across_gpus: False
   data_generators:
     # raw_image:
     #   resize_and_crop_to: 256
@@ -125,43 +126,43 @@ REPRESENTATION_GENERATOR:
 
     predicted_costmap:
       cost_predictor_checkpoint_paths: [
-        "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
-        "cost_predictors/round2/all_labels_objectnav_mse_scalar_bias_2_20260511_201404/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
+        # "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
+        # "cost_predictors/round2/all_labels_objectnav_mse_scalar_bias_2_20260511_201404/epoch_19.pth",
+        # "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
         "cost_predictors/round2/objectnav_c51_sb_metric_2_20260523_122029/epoch_19.pth",
         "cost_predictors/round2/objectnav_c51_db_metric_20260518_200932/epoch_19.pth",
         "cost_predictors/round2/objectnav_mse_sb_metric_20260518_204834/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_mse_scalar_bias_2_20260511_202040/epoch_19.pth",
-        "cost_predictors/round2/smacof_objectnav_mse_scalar_bias_20260511_191511/epoch_19.pth",
+        # "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_mse_scalar_bias_2_20260511_202040/epoch_19.pth",
+        # "cost_predictors/round2/smacof_objectnav_mse_scalar_bias_20260511_191511/epoch_19.pth",
         # "cost_predictors/round2/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
-        "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
+        # "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
         # "cost_predictors/round2/objectnav_c51_sb_wass_20260518_204834/epoch_19.pth",
         # Old:
         # "../data/cost_predictors/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/gt_perception_new_20260519_174339/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_scalar_bias_2_20260415_163819/epoch_19.pth",
-        # "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
+        "/home/dc/data/nav_experiments/cost_predictor/objectnav_mse_deberta_20260415_221649/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_20260416_102320/epoch_19.pth",
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
       ]
       distributional_cost_predictors: [
-        "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
+        # "cost_predictors/round2/all_labels_objectnav_c51_sb_20260518_205141/epoch_19.pth",
+        # "cost_predictors/round2/test_multimodal_deb_c51_all_labels_2_20260508_204642/epoch_19.pth",
         "cost_predictors/round2/objectnav_c51_sb_metric_2_20260523_122029/epoch_19.pth",
         "cost_predictors/round2/objectnav_c51_db_metric_20260518_200932/epoch_19.pth",
-        "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
-        "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
+        # "cost_predictors/round2/test_multimodal_deb_c51_w_visual_2_20260508_205007/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_db_metric_20260519_032958/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_db_metric_smacof_20260520_045521/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_db_smacof_20260519_205316/epoch_19.pth",
+        # "cost_predictors/round2/visual_objectnav_c51_scalar_bias_20260518_210557/epoch_19.pth",
         # "cost_predictors/round2/objectnav_c51_ce_deberta_smacof_lpe_20260418_234348/epoch_19.pth",
-        "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
+        # "cost_predictors/round2/smacof_objectnav_c51_scalar_bias_20260511_191532/epoch_19.pth",
         # "cost_predictors/round2/objectnav_c51_sb_wass_20260518_204834/epoch_19.pth",
         # Old:
         # "/home/dc/data/nav_experiments/cost_predictor/objectnav_c51_ce_scalar_bias_20260415_193856/epoch_19.pth",
@@ -186,7 +187,7 @@ REPRESENTATION_GENERATOR:
       use_segmaster_matcher: False
       segmaster_config_path: configs/config_eval_spp_resz.yaml
       segmaster_checkpoint_path: checkpoints/segmast3r_spp.ckpt
-      # vis_dir: temp/rollout_vis/test_multi_costmap_fix_infer
+      # vis_dir: temp/rollout_vis/test_h131
       vis_dir: null
       use_segmaster_geometry: False
       remove_mask_edges: False
